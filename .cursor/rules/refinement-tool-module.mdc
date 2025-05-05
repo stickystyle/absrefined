@@ -1,6 +1,6 @@
 ---
 description: 
-globs: 
+globs: absrefined/refinement_tool/*
 alwaysApply: false
 ---
 # Refinement Tool Module: Process Orchestration

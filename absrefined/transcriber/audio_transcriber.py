@@ -9,16 +9,18 @@ from openai import OpenAI, APIConnectionError, AuthenticationError, RateLimitErr
 class AudioTranscriber:
     """Class for transcribing audio segments using the OpenAI API."""
 
-    def __init__(self, api_key: str, verbose: bool = False):
+    def __init__(self, api_key: str, verbose: bool = False, debug: bool = False):
         """
         Initialize the transcriber.
 
         Args:
             api_key (str): The OpenAI API key.
             verbose (bool): Whether to print verbose output
+            debug (bool): Whether to save all transcripts for debugging
         """
         self.api_key = api_key
         self.verbose = verbose
+        self.debug = debug
         self.logger = logging.getLogger(self.__class__.__name__)
         self.client = OpenAI(api_key=self.api_key)
         self.logger.debug("AudioTranscriber initialized with OpenAI API.")
@@ -48,6 +50,17 @@ class AudioTranscriber:
         """
         if write_to_file and output_file is None:
             raise ValueError("output_file must be provided if write_to_file is True")
+
+        # Create debug output filename if in debug mode but no output file specified
+        debug_output_file = None
+        if self.debug and not write_to_file:
+            audio_filename = os.path.basename(audio_file)
+            base_name = os.path.splitext(audio_filename)[0]
+            debug_dir = os.path.dirname(audio_file)
+            debug_output_file = os.path.join(debug_dir, f"{base_name}_transcript.jsonl")
+            self.logger.info(f"Debug mode: Will save transcript to {debug_output_file}")
+            write_to_file = True
+            output_file = debug_output_file
 
         try:
             self.logger.debug(f"Transcribing {audio_file} with OpenAI API (whisper-1)...")

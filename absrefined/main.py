@@ -25,6 +25,9 @@ def main():
     parser.add_argument(
         "--verbose", "-v", action="store_true", help="Enable verbose output"
     )
+    parser.add_argument(
+        "--debug", action="store_true", help="Enable debug mode (save transcripts and audio chunks)"
+    )
     parser.add_argument("--temp-dir", help="Directory for temporary files")
     parser.add_argument(
         "--dry-run", action="store_true", help="Don't actually update ABS server"
@@ -120,7 +123,7 @@ def main():
 
     # Initialize transcriber (needed by the tool)
     # Pass the OpenAI API key, which is the same as the LLM key
-    transcriber = AudioTranscriber(api_key=llm_api_key, verbose=args.verbose)
+    transcriber = AudioTranscriber(api_key=llm_api_key, verbose=args.verbose, debug=args.debug)
     logger.debug("Initialized Audio Transcriber using OpenAI API.")
 
     # Create the refinement tool (needs client, transcriber, refiner)
@@ -132,6 +135,7 @@ def main():
         verbose=args.verbose,
         temp_dir=temp_dir,
         dry_run=args.dry_run,
+        debug=args.debug,
         # Pass chunk duration if needed, default is in the tool
         # chunk_duration= # optional override
     )

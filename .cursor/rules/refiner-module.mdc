@@ -1,6 +1,6 @@
 ---
 description: 
-globs: 
+globs: absrefined/refiner/*
 alwaysApply: false
 ---
 # Refiner Module: Chapter Marker Analysis

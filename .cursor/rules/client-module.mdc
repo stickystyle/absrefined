@@ -1,6 +1,6 @@
 ---
 description: 
-globs: 
+globs: absrefined/client/*
 alwaysApply: false
 ---
 # Client Module: AudioBookShelf API Client

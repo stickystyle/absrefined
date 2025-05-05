@@ -1,6 +1,6 @@
 ---
 description: 
-globs: 
+globs: absrefined/transcriber/*
 alwaysApply: false
 ---
 # Transcriber Module: Audio Transcription

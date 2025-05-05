@@ -27,6 +27,7 @@ class ChapterRefinementTool:
         verbose: bool = False,
         temp_dir: str = "temp",
         dry_run: bool = False,
+        debug: bool = False,
     ):
         """
         Initialize the chapter refinement tool.
@@ -38,6 +39,7 @@ class ChapterRefinementTool:
             verbose (bool): Whether to print verbose output
             temp_dir (str): Directory for temporary files
             dry_run (bool): Whether to run in dry-run mode (no updates)
+            debug (bool): Whether to preserve audio chunks and transcripts for debugging
         """
         self.abs_client = abs_client
         self.transcriber = transcriber
@@ -45,6 +47,7 @@ class ChapterRefinementTool:
         self.verbose = verbose
         self.temp_dir = temp_dir
         self.dry_run = dry_run
+        self.debug = debug
         self.logger = logging.getLogger(self.__class__.__name__)
 
         # Ensure temp directory exists
@@ -547,11 +550,19 @@ class ChapterRefinementTool:
                 )
 
                 # --- Extract Audio Segment using ffmpeg --- #
-                # Create a temporary file for the chunk securely, force WAV format
-                with tempfile.NamedTemporaryFile(
-                    suffix=".wav", dir=self.temp_dir, delete=False
-                ) as temp_f:
-                    temp_chunk_path = temp_f.name
+                # Create a proper filename for the chunk if in debug mode
+                if self.debug:
+                    # Clean chapter title for filename
+                    safe_title = re.sub(r'[^\w\-_]', '_', chapter_title)
+                    chunk_filename = f"{item_id}_chapter_{i+1}_{safe_title}_{window_start:.1f}s-{window_end:.1f}s.wav"
+                    temp_chunk_path = os.path.join(self.temp_dir, chunk_filename)
+                    self.logger.info(f"Debug mode: Saving audio chunk to {temp_chunk_path}")
+                else:
+                    # Create a temporary file for the chunk securely
+                    with tempfile.NamedTemporaryFile(
+                        suffix=".wav", dir=self.temp_dir, delete=False
+                    ) as temp_f:
+                        temp_chunk_path = temp_f.name
 
                 ffmpeg_cmd = [
                     "ffmpeg",
@@ -698,8 +709,8 @@ class ChapterRefinementTool:
                 updated_chapters.append(refined_chapter)
 
             finally:
-                # --- Clean up temporary audio chunk --- #
-                if temp_chunk_path and os.path.exists(temp_chunk_path):
+                # --- Clean up temporary audio chunk only if not in debug mode --- #
+                if temp_chunk_path and os.path.exists(temp_chunk_path) and not self.debug:
                     try:
                         os.remove(temp_chunk_path)
                         self.logger.debug(
@@ -709,6 +720,8 @@ class ChapterRefinementTool:
                         self.logger.error(
                             f"  Failed to clean up temp file {temp_chunk_path}: {e}"
                         )
+                elif self.debug and temp_chunk_path and os.path.exists(temp_chunk_path):
+                    self.logger.debug(f"  Keeping audio chunk for debugging: {temp_chunk_path}")
 
         # Close progress bar
         if isinstance(chapter_progress, tqdm):

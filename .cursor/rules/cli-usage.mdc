@@ -1,6 +1,6 @@
 ---
 description: 
-globs: 
+globs: absrefined/main.py
 alwaysApply: false
 ---
 # CLI Usage: Command Line Interface
@@ -16,5 +16,6 @@ The [main.py](mdc:absrefined/main.py) file provides a command-line interface for
 - `--dry-run`: Don't actually update the server
 - `--just-download`: Only download the audio file without processing
 - `--verbose`: Enable verbose output
+- `--debug`: Enable debug mode (save transcripts and audio chunks)
 
 The application also uses environment variables (via .env file) for credentials and API keys.
