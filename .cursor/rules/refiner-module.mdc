@@ -1,0 +1,16 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Refiner Module: Chapter Marker Analysis
+
+The [chapter_refiner.py](mdc:absrefined/refiner/chapter_refiner.py) module uses language models to analyze transcriptions and determine optimal chapter positions. Key features:
+
+- Connects to OpenAI-compatible LLM APIs
+- Analyzes audio transcription with context around chapter markers
+- Assesses if the current chapter marker is accurate
+- Determines more precise timestamp for chapter transitions when needed
+- Provides confidence scores and reasoning for refinements
+
+This module contains the core logic for identifying where chapter breaks should actually occur based on audio content.

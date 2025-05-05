@@ -1,0 +1,16 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Transcriber Module: Audio Transcription
+
+The [audio_transcriber.py](mdc:absrefined/transcriber/audio_transcriber.py) module handles converting audio to text. Key features:
+
+- Transcribes audio files using OpenAI's speech-to-text API
+- Processes audio in segments to handle large files
+- Provides detailed word-level timestamps
+- Caches transcriptions to avoid redundant processing
+- Handles various audio formats
+
+The module is essential for creating precise text representations of audio segments around chapter markers, which are then analyzed by the refiner.

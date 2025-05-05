@@ -1,0 +1,17 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Project Overview: AudioBookShelf Chapter Marker Refiner (ABSRefined)
+
+This project provides tools for improving chapter markers in audiobooks hosted on AudioBookShelf servers. It uses audio transcription and large language models to determine the precise location of chapter transitions.
+
+## Main Components
+
+- [absrefined/main.py](mdc:absrefined/main.py): Main entry point with CLI interface 
+- [absrefined/client/abs_client.py](mdc:absrefined/client/abs_client.py): Client for interacting with AudioBookShelf API
+- [absrefined/transcriber/audio_transcriber.py](mdc:absrefined/transcriber/audio_transcriber.py): Handles audio transcription
+- [absrefined/refiner/chapter_refiner.py](mdc:absrefined/refiner/chapter_refiner.py): Refines chapter markers using LLM
+- [absrefined/refinement_tool/chapter_refinement_tool.py](mdc:absrefined/refinement_tool/chapter_refinement_tool.py): Orchestrates the refinement process
+- [absrefined/utils/timestamp.py](mdc:absrefined/utils/timestamp.py): Utilities for timestamp handling

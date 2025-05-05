@@ -1,0 +1,19 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Workflow: How ABSRefined Works
+
+The application follows these steps to refine chapter markers:
+
+1. **Initialization**: Command line arguments and environment variables are processed in [main.py](mdc:absrefined/main.py)
+
+2. **API Connection**: [AudiobookshelfClient](mdc:absrefined/client/abs_client.py) establishes connection to the AudioBookShelf server
+
+3. **Refinement Process**: [ChapterRefinementTool](mdc:absrefined/refinement_tool/chapter_refinement_tool.py) orchestrates:
+   - Retrieving book and chapter information from the server
+   - Downloading audio files from AudioBookShelf
+   - Transcribing audio segments around chapter markers via [AudioTranscriber](mdc:absrefined/transcriber/audio_transcriber.py)
+   - Analyzing transcriptions with [ChapterRefiner](mdc:absrefined/refiner/chapter_refiner.py) using an LLM
+   - Updating refined chapter markers on the AudioBookShelf server

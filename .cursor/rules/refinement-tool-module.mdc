@@ -1,0 +1,19 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Refinement Tool Module: Process Orchestration
+
+The [chapter_refinement_tool.py](mdc:absrefined/refinement_tool/chapter_refinement_tool.py) module orchestrates the entire refinement process. Key responsibilities:
+
+- Coordinates between the client, transcriber, and refiner components
+- Manages the end-to-end workflow for chapter refinement
+- Handles audio file downloading and caching
+- Processes chapter markers in sequence
+- Compares original and refined chapter positions
+- Determines which changes are significant
+- Manages the update process for the AudioBookShelf server
+- Provides detailed reporting on refinement results
+
+This is the highest-level component that integrates all other modules.

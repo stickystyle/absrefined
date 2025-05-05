@@ -1,0 +1,15 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Utilities Module: Support Functions
+
+The [utils](mdc:absrefined/utils) package contains support functions used across the application:
+
+- [timestamp.py](mdc:absrefined/utils/timestamp.py): Handles timestamp conversions and formatting
+  - Converts between different timestamp formats (HH:MM:SS, seconds)
+  - Formats timestamps for display and API interactions
+  - Performs timestamp comparisons and calculations
+
+These utilities ensure consistent timestamp handling throughout the application.
