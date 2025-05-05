@@ -1,0 +1,78 @@
+---
+description: 
+globs: tests/*
+alwaysApply: false
+---
+# Testing Guide
+
+This guide provides instructions for testing the AudioBookShelf Chapter Marker Refiner.
+
+## Test Structure
+
+The test suite is structured as follows:
+
+- [tests/conftest.py](mdc:tests/conftest.py) - Defines fixtures for all tests
+- [tests/test_abs_client.py](mdc:tests/test_abs_client.py) - Tests for AudiobookshelfClient ([absrefined/client/abs_client.py](mdc:absrefined/client/abs_client.py))
+- [tests/test_audio_transcriber.py](mdc:tests/test_audio_transcriber.py) - Tests for AudioTranscriber ([absrefined/transcriber/audio_transcriber.py](mdc:absrefined/transcriber/audio_transcriber.py))
+- [tests/test_chapter_refiner.py](mdc:tests/test_chapter_refiner.py) - Tests for ChapterRefiner ([absrefined/refiner/chapter_refiner.py](mdc:absrefined/refiner/chapter_refiner.py))
+- [tests/test_chapter_refinement_tool.py](mdc:tests/test_chapter_refinement_tool.py) - Tests for ChapterRefinementTool ([absrefined/refinement_tool/chapter_refinement_tool.py](mdc:absrefined/refinement_tool/chapter_refinement_tool.py))
+- [tests/test_utils.py](mdc:tests/test_utils.py) - Tests for utility functions ([absrefined/utils/timestamp.py](mdc:absrefined/utils/timestamp.py))
+
+## Fixtures
+
+The following fixtures are defined in [tests/conftest.py](mdc:tests/conftest.py):
+
+- `mock_abs_response` - Factory for mock API responses
+- `abs_auth_response` - Mock authentication response
+- `abs_item_response` - Mock item response with chapters
+- `mock_audio_file` - Creates a mock audio file for testing
+- `mock_transcript_data` - Loads transcript data from chapter-segments directory
+- `mock_valid_chapters` - Loads valid chapter data from valid_chapters.txt
+- `mock_llm_response` - Mock response from the LLM API
+
+## Running Tests
+
+To run all tests:
+
+```bash
+pytest
+```
+
+To run tests for a specific component:
+
+```bash
+pytest tests/test_abs_client.py
+```
+
+To run a specific test:
+
+```bash
+pytest tests/test_abs_client.py::TestAudiobookshelfClient::test_login_success
+```
+
+## Test Implementation Guidelines
+
+When implementing the code, make sure:
+
+1. All tests pass after implementation
+2. Mocks are used for external API calls:
+   - AudioBookShelf API
+   - LLM API
+   - mlx-whisper transcription
+3. The implementation handles edge cases such as:
+   - Failed login
+   - Network errors
+   - Invalid URLs
+   - Missing chapter information
+   - Unable to detect precise chapter start
+   - User denying updates
+
+## Test Coverage
+
+Ensure that the implementation achieves good test coverage:
+
+- All methods should have at least one test
+- Edge cases should be tested
+- Happy paths should be tested
+- Input validation should be tested
+- Error handling should be tested

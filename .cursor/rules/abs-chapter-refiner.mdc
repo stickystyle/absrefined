@@ -1,0 +1,86 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# AudioBookShelf Chapter Marker Refiner
+
+This project is a tool for refining chapter markers in audiobooks hosted on an AudioBookShelf server. The tool uses mlx-whisper for transcription and an LLM to determine the precise location of chapter markers.
+
+## Project Structure
+
+- [absrefined/main.py](mdc:absrefined/main.py) - Main application entry point
+- [absrefined/client/abs_client.py](mdc:absrefined/client/abs_client.py) - AudiobookshelfClient implementation
+- [absrefined/transcriber/audio_transcriber.py](mdc:absrefined/transcriber/audio_transcriber.py) - AudioTranscriber implementation
+- [absrefined/refiner/chapter_refiner.py](mdc:absrefined/refiner/chapter_refiner.py) - ChapterRefiner implementation
+- [absrefined/refinement_tool/chapter_refinement_tool.py](mdc:absrefined/refinement_tool/chapter_refinement_tool.py) - ChapterRefinementTool implementation
+- [absrefined/utils/timestamp.py](mdc:absrefined/utils/timestamp.py) - Utility functions
+- [requirements.txt](mdc:requirements.txt) - Project dependencies
+- [tests/](mdc:tests) - Test files
+
+## Key Components
+
+### AudiobookshelfClient
+
+The `AudiobookshelfClient` class in [absrefined/client/abs_client.py](mdc:absrefined/client/abs_client.py) handles all interactions with the AudioBookShelf API:
+
+- Login and authentication
+- Fetching item details and chapter information
+- Streaming audio segments
+- Updating chapter markers
+
+### AudioTranscriber
+
+The `AudioTranscriber` class in [absrefined/transcriber/audio_transcriber.py](mdc:absrefined/transcriber/audio_transcriber.py) transcribes audio segments using mlx-whisper with word-level timestamps. It saves the transcription results as JSONL files.
+
+### ChapterRefiner
+
+The `ChapterRefiner` class in [absrefined/refiner/chapter_refiner.py](mdc:absrefined/refiner/chapter_refiner.py) uses an OpenAI-compatible LLM API to analyze transcripts and determine the precise start of chapters.
+
+NOTE VERY IMPORTANT: YOU MUST NOT USE PATTERN MATCHING OR REGULAR EXPRESSIONS TO DETECT CHAPTERS. AT NO POINT SHOULD YOU HARDCODE ANY TIMESTAMPS INTO THE FILES.
+
+### ChapterRefinementTool
+
+The `ChapterRefinementTool` class in [absrefined/refinement_tool/chapter_refinement_tool.py](mdc:absrefined/refinement_tool/chapter_refinement_tool.py) orchestrates the entire workflow:
+
+1. Extract item ID from URL
+2. Fetch item details and chapters
+3. Download audio file
+4. Transcribe audio file
+5. Analyze transcripts with LLM
+6. Compare original and refined chapter markers
+7. Update the server with user confirmation
+
+## Tests
+
+- [tests/conftest.py](mdc:tests/conftest.py) - Pytest fixtures and mocks
+- [tests/test_abs_client.py](mdc:tests/test_abs_client.py) - Tests for AudiobookshelfClient
+- [tests/test_audio_transcriber.py](mdc:tests/test_audio_transcriber.py) - Tests for AudioTranscriber
+- [tests/test_chapter_refiner.py](mdc:tests/test_chapter_refiner.py) - Tests for ChapterRefiner
+- [tests/test_chapter_refinement_tool.py](mdc:tests/test_chapter_refinement_tool.py) - Tests for ChapterRefinementTool
+- [tests/test_utils.py](mdc:tests/test_utils.py) - Tests for utility functions
+
+## Dependencies
+
+- `requests` - For API calls
+- `mlx-whisper` - For audio transcription with word-level timestamps
+- `pytest` - For testing
+- `tqdm` - For progress bars
+- `pathlib` - For file path handling
+
+## Workflow
+
+1. Login to AudioBookShelf using API
+2. Extract item ID from user-provided URL
+3. Fetch chapter data from the server
+4. Download the audiobook to the local filesystem
+5. Use ffmpeg to extract audio clips from the audiobook (15 seconds before and after each chapter marker)
+6. Transcribe the audio clips using whisper-mlx
+7. Use an LLM to determine the precise timestamp for chapter start
+8. Report findings to the user (showing old vs. new timestamps)
+9. Update chapter markers on the server with user confirmation
+
+## Implementation Notes
+
+- The tool uses real data from `chapter-segments/` and `valid_chapters.txt` when available
+- You should NEVER hardcode any validated chapter timestamps or strings into the codebase

@@ -1,0 +1,197 @@
+import json
+import os
+import pytest
+import sys
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+
+# Mock the mlx_whisper module for tests
+class MockMlxWhisper:
+    @staticmethod
+    def transcribe(audio_file, word_timestamps=False):
+        return {
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 5.0,
+                    "text": "This is test audio.",
+                    "words": [
+                        {"word": "This", "start": 0.0, "end": 1.0, "probability": 0.9},
+                        {"word": "is", "start": 1.0, "end": 2.0, "probability": 0.9},
+                        {"word": "test", "start": 2.0, "end": 3.0, "probability": 0.9},
+                        {"word": "audio.", "start": 3.0, "end": 5.0, "probability": 0.9}
+                    ]
+                },
+                {
+                    "start": 5.0,
+                    "end": 10.0,
+                    "text": "Chapter 1",
+                    "words": [
+                        {"word": "Chapter", "start": 5.0, "end": 8.0, "probability": 0.9},
+                        {"word": "1", "start": 8.0, "end": 10.0, "probability": 0.9}
+                    ]
+                }
+            ]
+        }
+
+
+# Add mock modules to sys.modules
+sys.modules["mlx_whisper"] = MockMlxWhisper
+
+
+@pytest.fixture
+def mock_abs_response():
+    """Mock response from Audiobookshelf API."""
+    def _mock_response(
+        status_code=200,
+        json_data=None,
+        content=None,
+        raise_for_status=None
+    ):
+        mock_resp = MagicMock()
+        # Set status code
+        mock_resp.status_code = status_code
+        
+        # Set raise_for_status method
+        mock_resp.raise_for_status = MagicMock()
+        if raise_for_status:
+            mock_resp.raise_for_status.side_effect = raise_for_status
+            
+        # Set json method
+        if json_data is not None:
+            mock_resp.json = MagicMock(return_value=json_data)
+            
+        # Set content attribute and iter_content method
+        if content is not None:
+            mock_resp.content = content
+            mock_resp.iter_content = MagicMock(return_value=[content])
+            
+        # Set text attribute for error messages
+        mock_resp.text = "Mock response text"
+        
+        return mock_resp
+    return _mock_response
+
+
+@pytest.fixture
+def abs_auth_response():
+    """Mock auth response from Audiobookshelf API."""
+    return {
+        "user": {
+            "id": "user-123",
+            "type": "admin",
+            "username": "testuser",
+            "token": "test-token-123"
+        }
+    }
+
+
+@pytest.fixture
+def abs_item_response():
+    """Mock item response from AudioBookShelf API."""
+    return {
+        "id": "lib-item-123",
+        "mediaType": "book",
+        "media": {
+            "metadata": {
+                "title": "Test Book",
+                "author": "Test Author"
+            },
+            "chapters": [
+                {
+                    "id": "chapter-1",
+                    "start": 291.18,
+                    "end": 1845.2,
+                    "title": "Chapter 1"
+                },
+                {
+                    "id": "chapter-2",
+                    "start": 1845.2,
+                    "end": 2257.88,
+                    "title": "Chapter 2"
+                },
+                {
+                    "id": "chapter-3",
+                    "start": 2257.88,
+                    "end": 3483.66,
+                    "title": "Chapter 3"
+                }
+            ]
+        }
+    }
+
+
+@pytest.fixture
+def mock_audio_file(tmp_path):
+    """Create a mock audio file."""
+    audio_path = tmp_path / "test_audio.mp3"
+    # Create an empty file for testing
+    audio_path.touch()
+    return str(audio_path)
+
+
+@pytest.fixture
+def mock_transcript_data():
+    """Mock transcription data from whisper-mlx."""
+    chapter_segments = {}
+    
+    # Load real chapter segment data from the chapter-segments directory
+    segments_dir = Path("chapter-segments")
+    if segments_dir.exists():
+        for segment_file in segments_dir.glob("*.jsonl"):
+            chapter_name = segment_file.stem
+            
+            with open(segment_file, "r", encoding="utf-8") as f:
+                # Load each line as JSON
+                segments = [json.loads(line) for line in f]
+                chapter_segments[chapter_name] = segments
+    
+    return chapter_segments
+
+
+@pytest.fixture
+def mock_valid_chapters():
+    """Mock valid chapters data from valid_chapters.txt."""
+    valid_chapters = {}
+    
+    # Load real chapter data from valid_chapters.txt if it exists
+    valid_file = Path("valid_chapters.txt")
+    if valid_file.exists():
+        with open(valid_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    # Parse format like "04:51.180 - Chapter 1"
+                    parts = line.split(" - ", 1)
+                    if len(parts) == 2:
+                        timestamp, chapter_name = parts
+                        valid_chapters[chapter_name] = timestamp
+    
+    return valid_chapters
+
+
+@pytest.fixture
+def mock_llm_response():
+    """Mock response from OpenAI-compatible LLM API."""
+    return {
+        "id": "chatcmpl-123",
+        "object": "chat.completion",
+        "created": 1677858242,
+        "model": "gpt-3.5-turbo",
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "The precise chapter start is at 291.18 seconds. This timestamp represents the beginning of 'Chapter 1', which is clearly marked in the audio."
+                },
+                "index": 0,
+                "finish_reason": "stop"
+            }
+        ],
+        "usage": {
+            "prompt_tokens": 40,
+            "completion_tokens": 20,
+            "total_tokens": 60
+        }
+    } 

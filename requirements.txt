@@ -1,0 +1,7 @@
+requests
+# mlx-whisper # Removed
+openai # Ensure openai is present
+pytest
+tqdm
+pathlib
+dotenv # Added for environment variables 
