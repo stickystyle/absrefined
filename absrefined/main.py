@@ -126,18 +126,31 @@ def main():
     # If download_path not provided in args or config, use system temp directory
     if "processing" not in config:
         config["processing"] = {}
-    if "download_path" not in config["processing"] or not config["processing"]["download_path"]:
-        # Create a unique subdirectory in the system temp dir
-        temp_subdir = os.path.join(tempfile.gettempdir(), f"absrefined_cli_{os.getpid()}")
-        config["processing"]["download_path"] = temp_subdir
-        logging.info(f"Using system temp directory for downloads: {temp_subdir}")
-        # Register cleanup function
-        atexit.register(_cleanup_temp_files, temp_subdir)
-    else:
-        # Register cleanup for configured path
-        atexit.register(_cleanup_temp_files, config["processing"]["download_path"])
     
-    # Ensure the download directory exists
+    # Path determined by now (either from config, CLI override, or still not set)
+    # The config["processing"]["download_path"] has been potentially set by args.download_path already.
+    current_download_path_setting = config.get("processing", {}).get("download_path")
+
+    is_path_auto_generated = False # Flag to track if we're using an auto-generated path
+    if not current_download_path_setting:
+        # Path not set by config or CLI, so use system temp
+        temp_subdir = os.path.join(tempfile.gettempdir(), f"absrefined_cli_{os.getpid()}")
+        config["processing"]["download_path"] = temp_subdir # Update config with the path being used
+        logging.info(f"Using system temp directory for downloads: {temp_subdir}")
+        atexit.register(_cleanup_temp_files, temp_subdir) # Always clean up system temp
+        is_path_auto_generated = True
+    else:
+        # Path was set by config or CLI. Decide if it should be cleaned.
+        # debug_files: (Optional, boolean) If true, preserves intermediate files... in the download path
+        debug_preserve_path = config.get("logging", {}).get("debug_files", False)
+        if debug_preserve_path:
+            logging.info(f"Preserving user-specified download path due to 'debug_files=true': {current_download_path_setting}")
+            # No atexit registration for cleanup, path will be preserved
+        else:
+            logging.info(f"Registering user-specified download path for cleanup: {current_download_path_setting}")
+            atexit.register(_cleanup_temp_files, current_download_path_setting) # Clean up user-specified path
+            
+    # Ensure the download directory exists, whether it will be cleaned or preserved
     os.makedirs(config["processing"]["download_path"], exist_ok=True)
         
     if args.model: # Overrides refiner model
