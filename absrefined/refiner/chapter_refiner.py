@@ -71,10 +71,13 @@ class ChapterRefiner:
 
         Returns:
             Optional[float]: Detected chapter start time (offset from chunk start) in seconds, or None.
+            Tuple[Optional[float], Optional[Dict[str, int]]]: Detected chapter start time (offset from chunk start) 
+                                                               in seconds, and a dictionary containing token usage 
+                                                               (prompt_tokens, completion_tokens, total_tokens), or (None, None).
         """
         if not transcript_segments:
             self.logger.warning(f"No transcript segments provided for chapter '{chapter_title}'. Cannot refine.")
-            return None
+            return None, None
 
         model_to_use = model_name_override if model_name_override else self.default_model_name
 
@@ -108,11 +111,11 @@ class ChapterRefiner:
 
         user_prompt += "Return ONLY the relative timestamp in seconds."
 
-        llm_response_content = self.query_llm(system_prompt, user_prompt, model_to_use, max_tokens=20) 
+        llm_response_content, usage_data = self.query_llm(system_prompt, user_prompt, model_to_use, max_tokens=20) 
 
         if not llm_response_content:
             self.logger.warning(f"LLM query failed or returned empty for chapter '{chapter_title}'.")
-            return None
+            return None, None
 
         try:
             parsed_timestamp = float(llm_response_content.strip())
@@ -123,25 +126,28 @@ class ChapterRefiner:
             # if the LLM is confused about the exact end. More importantly, it should not be negative.
             if -0.5 <= parsed_timestamp <= (search_window_seconds + 0.5):
                 # Ensure it's not negative after tolerance (clamp to 0 if slightly negative due to tolerance)
-                return max(0.0, parsed_timestamp) 
+                return max(0.0, parsed_timestamp), usage_data
             else:
                 self.logger.warning(
                     f"LLM proposed timestamp {parsed_timestamp:.3f}s is outside the plausible chunk window [0, {search_window_seconds:.2f}s] for '{chapter_title}'. Discarding."
                 )
                 self.logger.debug(f"Out-of-bounds LLM response for '{chapter_title}': '{llm_response_content}'")
-                return None
+                return None, None
         except ValueError:
             self.logger.warning(
                 f"Could not parse timestamp from LLM response for '{chapter_title}'. Response: '{llm_response_content}'")
-            return None
+            return None, None
 
     def query_llm(
         self, system_prompt: str, user_prompt: str, model_name: str, max_tokens: int = 50
-    ) -> Optional[str]:
+    ) -> tuple[Optional[str], Optional[Dict[str, int]]]:
         """
         Query the LLM API using the initialized OpenAI client.
         Args: model_name is the specific model to use.
         Returns: Generated text content from the LLM, or None on failure.
+        Returns: A tuple containing: 
+                 - Generated text content from the LLM (str, or None on failure).
+                 - Token usage dictionary (prompt_tokens, completion_tokens, total_tokens), or None on failure/if not available.
         """
         try:
             self.logger.info(f"Sending query to LLM (Model: {model_name}). Max tokens: {max_tokens}.")
@@ -166,10 +172,22 @@ class ChapterRefiner:
             if response.choices and response.choices[0].message:
                 content = response.choices[0].message.content
                 self.logger.debug(f"LLM Raw Response: '{content}'")
-                return content.strip() if content else None
+                
+                usage_info = None
+                if response.usage:
+                    usage_info = {
+                        "prompt_tokens": response.usage.prompt_tokens,
+                        "completion_tokens": response.usage.completion_tokens,
+                        "total_tokens": response.usage.total_tokens
+                    }
+                    self.logger.debug(f"LLM Usage: {usage_info}")
+                else:
+                    self.logger.warning("LLM response missing usage data.")
+                    
+                return content.strip() if content else None, usage_info
             else:
                 self.logger.warning("LLM response missing choices or message content.")
-                return None
+                return None, None
 
         except APIError as e: 
             self.logger.error(f"OpenAI API Error during LLM query (Model: {model_name}, BaseURL: {self.api_base_url}): {e}")
@@ -180,7 +198,7 @@ class ChapterRefiner:
             elif e.status_code == 404:
                  self.logger.error(f"Model not found error: The model '{model_name}' may not be available at {self.api_base_url}. Check model name and API endpoint.")
             # Other status codes will just log the generic APIError message.
-            return None
+            return None, None
         except Exception as e:
             self.logger.exception(f"Unexpected error during LLM query (Model: {model_name}): {e}")
-            return None
+            return None, None

@@ -54,6 +54,21 @@ search_window_seconds = 30
 # Example: "/path/to/your/temp/folder"
 download_path = "absrefined_temp_audio"
 
+# debug_files: (Optional, boolean) If true, preserves intermediate files like audio chunks
+# and transcripts in the download path for debugging.
+# debug_files = false
+
+[costs]
+# Cost for the LLM used in chapter refinement.
+# OpenAI and other providers often have different costs for prompt (input) and completion (output) tokens.
+# Specify these costs per million tokens.
+# Example: If prompt tokens are $0.50/1M and completion tokens are $1.50/1M.
+# llm_refinement_cost_per_million_prompt_tokens = 0.0 
+# llm_refinement_cost_per_million_completion_tokens = 0.0
+
+# Cost for audio transcription, per minute of audio processed.
+# Example: OpenAI's Whisper API is $0.006 per minute.
+# audio_transcription_cost_per_minute = 0.0
 
 [logging]
 # Optional: Set the logging level

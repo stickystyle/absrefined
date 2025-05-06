@@ -362,6 +362,35 @@ def main():
     elif not updates_for_server:
         logger.info("\nNo significant chapter changes found to update on the server.")
     
+    # --- Display Usage and Cost Information ---
+    refinement_usage = result.get("refinement_usage")
+    transcription_usage = result.get("transcription_usage")
+
+    # Access cost configuration directly from the loaded 'config' dictionary
+    llm_prompt_cost_config = config.get("costs", {}).get("llm_refinement_cost_per_million_prompt_tokens", 0.0)
+    llm_completion_cost_config = config.get("costs", {}).get("llm_refinement_cost_per_million_completion_tokens", 0.0)
+    transcription_cost_config = config.get("costs", {}).get("audio_transcription_cost_per_minute", 0.0)
+
+    if refinement_usage or transcription_usage:
+        logger.info("\n--- Usage & Cost Estimates ---")
+        if refinement_usage:
+            logger.info("Refinement (LLM):")
+            logger.info(f"  Prompt Tokens:     {refinement_usage.get('prompt_tokens', 0)}")
+            logger.info(f"  Completion Tokens: {refinement_usage.get('completion_tokens', 0)}")
+            logger.info(f"  Total Tokens:      {refinement_usage.get('total_tokens', 0)}")
+            if llm_prompt_cost_config > 0 or llm_completion_cost_config > 0:
+                 logger.info(f"  Estimated Cost:    ${refinement_usage.get('estimated_cost', 0.0):.4f}")
+            else:
+                 logger.info(f"  Estimated Cost:    Not calculated (costs not configured or are zero)")
+
+        if transcription_usage:
+            logger.info("Transcription (Audio):")
+            logger.info(f"  Total Duration:    {transcription_usage.get('duration_seconds', 0.0):.2f}s ({transcription_usage.get('duration_minutes', 0.0):.2f} min)")
+            if transcription_cost_config > 0:
+                 logger.info(f"  Estimated Cost:    ${transcription_usage.get('estimated_cost', 0.0):.4f}")
+            else:
+                 logger.info(f"  Estimated Cost:    Not calculated (cost not configured or is zero)")
+
     logger.info("Refinement process complete.")
     return 0 # Indicate success
 

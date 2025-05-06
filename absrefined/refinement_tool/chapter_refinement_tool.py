@@ -6,7 +6,8 @@ import re
 import shutil
 import subprocess
 import tempfile
-from typing import Dict, List, Tuple, Any, Callable
+from typing import Dict, List, Tuple, Any, Callable, Optional
+from pathlib import Path
 
 from tqdm import tqdm
 
@@ -52,6 +53,13 @@ class ChapterRefinementTool:
 
         self.base_temp_dir = processing_config.get("download_path", "absrefined_temp_audio")
         self.debug_preserve_files = logging_config.get("debug_files", False)
+
+        # Load cost parameters from config
+        costs_config = self.config.get("costs", {})
+        self.llm_cost_per_mil_prompt_tokens = costs_config.get("llm_refinement_cost_per_million_prompt_tokens", 0.0)
+        self.llm_cost_per_mil_completion_tokens = costs_config.get("llm_refinement_cost_per_million_completion_tokens", 0.0)
+        self.transcription_cost_per_minute = costs_config.get("audio_transcription_cost_per_minute", 0.0)
+        self.logger.info(f"Costs loaded: LLM Prompt CPMT: ${self.llm_cost_per_mil_prompt_tokens:.4f}, LLM Completion CPMT: ${self.llm_cost_per_mil_completion_tokens:.4f}, Transcription CPM: ${self.transcription_cost_per_minute:.4f}")
 
         self.logger.info(f"ChapterRefinementTool initialized. Base temp dir: {self.base_temp_dir}, Debug preserve: {self.debug_preserve_files}")
 
@@ -198,6 +206,12 @@ class ChapterRefinementTool:
             refined_count = 0
             significant_change_threshold = 0.1
 
+            # Accumulators for usage and cost calculation
+            total_prompt_tokens = 0
+            total_completion_tokens = 0
+            total_refined_tokens = 0
+            total_transcribed_duration_seconds = 0.0
+
             for processed_chapter in processed_chapters_list:
                 original_start = processed_chapter.get("original_start")
                 refined_start = processed_chapter.get("refined_start")
@@ -209,10 +223,64 @@ class ChapterRefinementTool:
                 ):
                     refined_count += 1
 
-                final_chapter_details.append(processed_chapter)
+                # Append details for this chapter, including the ABSOLUTE refined time
+                final_chapter_details.append({
+                    "id": processed_chapter.get("id"),
+                    "title": processed_chapter.get("title", f"Chapter {processed_chapter.get('index', 'N/A')}"),
+                    "original_start": original_start, # Absolute
+                    "refined_start": refined_start, # Absolute (or None)
+                    "chunk_path": processed_chapter.get("chunk_path"),
+                    "window_start_time": processed_chapter.get("window_start_time"), # Absolute start of chunk
+                })
+
+                # Calculate usage and cost for this chapter
+                if processed_chapter.get("usage_data"):
+                    usage_data = processed_chapter["usage_data"]
+                    total_prompt_tokens += usage_data.get("prompt_tokens", 0)
+                    total_completion_tokens += usage_data.get("completion_tokens", 0)
+                    total_refined_tokens += usage_data.get("total_tokens", 0)
+                    self.logger.debug(f"Chapter '{processed_chapter['title']}' LLM usage: P:{usage_data.get('prompt_tokens',0)}, C:{usage_data.get('completion_tokens',0)}, T:{usage_data.get('total_tokens',0)}")
+
+                # Calculate transcription duration for this chapter
+                if processed_chapter.get("chunk_duration_seconds"):
+                    chunk_duration_seconds = processed_chapter["chunk_duration_seconds"]
+                    total_transcribed_duration_seconds += chunk_duration_seconds
 
             result["chapter_details"] = final_chapter_details
             result["refined_chapters"] = refined_count
+
+            # Calculate costs
+            refinement_cost = 0.0
+            if total_refined_tokens > 0: # Only calculate if there were tokens
+                prompt_cost = 0.0
+                if self.llm_cost_per_mil_prompt_tokens > 0 and total_prompt_tokens > 0:
+                    prompt_cost = (total_prompt_tokens / 1_000_000.0) * self.llm_cost_per_mil_prompt_tokens
+                
+                completion_cost = 0.0
+                if self.llm_cost_per_mil_completion_tokens > 0 and total_completion_tokens > 0:
+                    completion_cost = (total_completion_tokens / 1_000_000.0) * self.llm_cost_per_mil_completion_tokens
+                
+                refinement_cost = prompt_cost + completion_cost
+            
+            transcription_cost = 0.0
+            if self.transcription_cost_per_minute > 0 and total_transcribed_duration_seconds > 0:
+                transcription_cost = (total_transcribed_duration_seconds / 60.0) * self.transcription_cost_per_minute
+
+            result["refinement_usage"] = {
+                "prompt_tokens": total_prompt_tokens,
+                "completion_tokens": total_completion_tokens,
+                "total_tokens": total_refined_tokens,
+                "estimated_cost": refinement_cost
+            }
+            result["transcription_usage"] = {
+                "duration_seconds": total_transcribed_duration_seconds,
+                "duration_minutes": total_transcribed_duration_seconds / 60.0,
+                "estimated_cost": transcription_cost
+            }
+            
+            self.logger.info(f"Refinement token usage: Prompt={total_prompt_tokens}, Completion={total_completion_tokens}, Total={total_refined_tokens}. Estimated Cost: ${refinement_cost:.4f}")
+            self.logger.info(f"Transcription usage: Duration={total_transcribed_duration_seconds:.2f}s ({total_transcribed_duration_seconds/60.0:.2f}m). Estimated Cost: ${transcription_cost:.4f}")
+
             _update_progress(100, "Processing complete.")
 
         except EnvironmentError as e:
@@ -425,7 +493,7 @@ class ChapterRefinementTool:
                     target_time_relative_to_chunk = original_start_time - window_start
                     
                     # Call refiner with NORMALIZED transcript and RELATIVE target time
-                    refined_offset_in_chunk = self.refiner.refine_chapter_start_time(
+                    refined_offset_in_chunk, usage_data = self.refiner.refine_chapter_start_time(
                         transcript_segments=normalized_transcript_for_refiner, # Use normalized
                         chapter_title=chapter_title,
                         target_time_seconds=target_time_relative_to_chunk, # Use relative target
@@ -477,6 +545,8 @@ class ChapterRefinementTool:
                 "refined_start": refined_start_time_abs, # Absolute (or None)
                 "chunk_path": final_chunk_path_to_store,
                 "window_start_time": final_window_start_to_store, # Absolute start of chunk
+                "usage_data": usage_data,
+                "chunk_duration_seconds": actual_chunk_duration,
             })
 
             # Cleanup individual chunk and transcript (if not debugging)

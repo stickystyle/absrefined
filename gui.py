@@ -74,6 +74,7 @@ atexit.register(_cleanup_temp_files)
 
 class AbsRefinedApp:
     def __init__(self, root):
+        global _temp_dirs_to_clean # Moved here
         self.root = root
         self.root.title("ABSRefined GUI")
         self.root.geometry("800x600") # Adjust as needed
@@ -120,13 +121,13 @@ class AbsRefinedApp:
                 temp_subdir = os.path.join(tempfile.gettempdir(), f"absrefined_gui_{os.getpid()}")
                 self.download_path = Path(temp_subdir)
                 # Record for cleanup on exit
-                global _temp_dirs_to_clean
+                # global _temp_dirs_to_clean # Removed from here
                 _temp_dirs_to_clean.add(str(self.download_path))
                 self.logger.info(f"Using system temp directory for downloads: {temp_subdir}")
             else:
                 self.download_path = Path(processing_config["download_path"])
                 # Also add the configured path to be cleaned up
-                global _temp_dirs_to_clean
+                # global _temp_dirs_to_clean # Removed from here
                 _temp_dirs_to_clean.add(str(self.download_path))
 
             # Update config with the actual download path
@@ -156,6 +157,12 @@ class AbsRefinedApp:
         # --- Cancellation Event --- #
         self.cancel_event = threading.Event()
 
+        # --- Initialize Cost Config Variables ---
+        costs_cfg = self.config.get("costs", {})
+        self.llm_prompt_cost_config_val = costs_cfg.get("llm_refinement_cost_per_million_prompt_tokens", 0.0)
+        self.llm_completion_cost_config_val = costs_cfg.get("llm_refinement_cost_per_million_completion_tokens", 0.0)
+        self.transcription_cost_config_val = costs_cfg.get("audio_transcription_cost_per_minute", 0.0)
+
         # --- GUI Frames ---
         self.input_frame = ttk.Frame(root, padding="10")
         self.input_frame.grid(row=0, column=0, sticky="ew")
@@ -171,6 +178,9 @@ class AbsRefinedApp:
 
         self.action_frame = ttk.Frame(root, padding="10")
         self.action_frame.grid(row=4, column=0, sticky="ew")
+
+        self.usage_cost_frame = ttk.Frame(root, padding="10") # New frame for usage/cost
+        self.usage_cost_frame.grid(row=5, column=0, sticky="ew")
 
         # Configure resizing behavior
         self.root.columnconfigure(0, weight=1)
@@ -255,6 +265,9 @@ class AbsRefinedApp:
         self.push_button = ttk.Button(self.action_frame, text="Push Selected to Server", command=self.push_to_server, state=tk.DISABLED)
         self.push_button.pack(pady=5) # Simple packing for now
 
+        # --- Usage and Cost Display Labels ---
+        self._setup_usage_cost_labels()
+
         # --- Start Queue Polling ---
         self.root.after(100, self.process_queue)
 
@@ -296,6 +309,83 @@ class AbsRefinedApp:
         # Separator below headers
         ttk.Separator(self.scrollable_frame, orient='horizontal').grid(row=1, column=0, sticky='ew', pady=2, columnspan=5)
 
+
+    def _setup_usage_cost_labels(self):
+        """Creates and grids the labels for usage and cost display."""
+        frame = self.usage_cost_frame
+        # StringVars for dynamic updates
+        self.ref_prompt_tokens_var = tk.StringVar(value="N/A")
+        self.ref_completion_tokens_var = tk.StringVar(value="N/A")
+        self.ref_total_tokens_var = tk.StringVar(value="N/A")
+        self.ref_cost_var = tk.StringVar(value="N/A")
+        self.trans_duration_var = tk.StringVar(value="N/A")
+        self.trans_cost_var = tk.StringVar(value="N/A")
+
+        row = 0
+        ttk.Label(frame, text="Usage & Cost Estimates:", font=("Helvetica", 10, "bold")).grid(row=row, column=0, columnspan=4, sticky="w", pady=(0,5))
+        row += 1
+
+        # Refinement LLM Usage
+        ttk.Label(frame, text="Refinement (LLM)").grid(row=row, column=0, columnspan=4, sticky="w", pady=(5,0))
+        row += 1
+        ttk.Label(frame, text="Prompt Tokens:").grid(row=row, column=0, sticky="w")
+        ttk.Label(frame, textvariable=self.ref_prompt_tokens_var).grid(row=row, column=1, sticky="w")
+        ttk.Label(frame, text="Completion Tokens:").grid(row=row, column=2, sticky="w")
+        ttk.Label(frame, textvariable=self.ref_completion_tokens_var).grid(row=row, column=3, sticky="w")
+        row += 1
+        ttk.Label(frame, text="Total Tokens:").grid(row=row, column=0, sticky="w")
+        ttk.Label(frame, textvariable=self.ref_total_tokens_var).grid(row=row, column=1, sticky="w")
+        ttk.Label(frame, text="Estimated Cost:").grid(row=row, column=2, sticky="w")
+        ttk.Label(frame, textvariable=self.ref_cost_var).grid(row=row, column=3, sticky="w")
+        row += 1
+
+        # Transcription Usage
+        ttk.Label(frame, text="Transcription (Audio)").grid(row=row, column=0, columnspan=4, sticky="w", pady=(10,0))
+        row += 1
+        ttk.Label(frame, text="Total Duration:").grid(row=row, column=0, sticky="w")
+        ttk.Label(frame, textvariable=self.trans_duration_var).grid(row=row, column=1, sticky="w")
+        ttk.Label(frame, text="Estimated Cost:").grid(row=row, column=2, sticky="w")
+        ttk.Label(frame, textvariable=self.trans_cost_var).grid(row=row, column=3, sticky="w")
+
+        for i in range(4):
+            frame.columnconfigure(i, weight=1)
+
+    def _reset_usage_cost_labels(self):
+        """Resets usage and cost labels to their initial state."""
+        self.ref_prompt_tokens_var.set("N/A")
+        self.ref_completion_tokens_var.set("N/A")
+        self.ref_total_tokens_var.set("N/A")
+        self.ref_cost_var.set("N/A")
+        self.trans_duration_var.set("N/A")
+        self.trans_cost_var.set("N/A")
+
+    def _update_usage_cost_display(self, refinement_usage, transcription_usage):
+        """Updates the StringVars for usage and cost display."""
+        if refinement_usage:
+            self.ref_prompt_tokens_var.set(str(refinement_usage.get("prompt_tokens", "N/A")))
+            self.ref_completion_tokens_var.set(str(refinement_usage.get("completion_tokens", "N/A")))
+            self.ref_total_tokens_var.set(str(refinement_usage.get("total_tokens", "N/A")))
+            if self.llm_prompt_cost_config_val > 0 or self.llm_completion_cost_config_val > 0:
+                self.ref_cost_var.set(f"${refinement_usage.get('estimated_cost', 0.0):.4f}")
+            else:
+                self.ref_cost_var.set("Not Configured")
+        else:
+            self.ref_prompt_tokens_var.set("N/A")
+            self.ref_completion_tokens_var.set("N/A")
+            self.ref_total_tokens_var.set("N/A")
+            self.ref_cost_var.set("N/A")
+
+        if transcription_usage:
+            duration_s = transcription_usage.get("duration_seconds", 0.0)
+            duration_m = transcription_usage.get("duration_minutes", 0.0)
+            self.trans_duration_var.set(f"{duration_s:.2f}s ({duration_m:.2f}m)")
+            if self.transcription_cost_config_val > 0:
+                self.trans_cost_var.set(f"${transcription_usage.get('estimated_cost', 0.0):.4f}")
+            else:
+                self.trans_cost_var.set("Not Configured")
+        else:
+            self.trans_duration_var.set("N/A")
+            self.trans_cost_var.set("N/A")
 
     def start_processing_thread(self):
         """Initiates the background processing task."""
@@ -342,6 +432,7 @@ class AbsRefinedApp:
         self.audio_file_path = None # Reset audio path
         self.progress_bar["value"] = 0
         self.progress_label_var.set("Progress: Starting...")
+        self._reset_usage_cost_labels() # Reset usage/cost display
 
         # Gather args for the background task
         args = {
@@ -453,6 +544,11 @@ class AbsRefinedApp:
 
             self.update_gui_progress(100, final_message)
             self.queue_task(self._update_button_states)
+
+            # After processing, update the usage/cost display via queue
+            ref_usage = full_results.get("refinement_usage")
+            trans_usage = full_results.get("transcription_usage")
+            self.queue_task(self._update_usage_cost_display, ref_usage, trans_usage)
 
         except InterruptedError:
              self.logger.info("Refinement task execution cancelled.")
