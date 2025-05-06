@@ -136,7 +136,11 @@ class ChapterRefinementTool:
         return downloaded_path
 
     def process_item(
-        self, item_id: str, search_window_seconds: int, model_name_override: str | None
+        self,
+        item_id: str,
+        search_window_seconds: int,
+        model_name_override: str | None,
+        dry_run: bool = False,
     ) -> Dict:
         """
         Process an item to refine its chapter markers.
@@ -144,6 +148,7 @@ class ChapterRefinementTool:
             item_id (str): ID of the item to process.
             search_window_seconds (int): Transcription window around chapter marks.
             model_name_override (str | None): Specific LLM model name to use, overrides config if provided.
+            dry_run (bool): If True, no changes will be made to the server (currently handled by caller).
         Returns:
             Dict: Result dictionary (same structure as before).
         """

@@ -20,6 +20,7 @@ from absrefined.transcriber import AudioTranscriber
 from absrefined.refiner import ChapterRefiner
 from absrefined.refinement_tool import ChapterRefinementTool
 from absrefined.utils.timestamp import format_timestamp  # Assuming you have this
+from absrefined.utils.url_utils import extract_item_id_from_url  # Added import
 
 # --- Try importing audio libraries and set flags --- #
 has_simpleaudio = False
@@ -700,97 +701,62 @@ class AbsRefinedApp:
         abs_host_config = (
             self.config.get("audiobookshelf", {}).get("host", "").strip("/")
         )
+        final_server_url = None
+        item_id = None
 
         if not url:
             return None, None  # No URL provided
 
-        # Regex to find item ID at the end of a path, potentially with a server part
-        # Example: http://host/item/itemId, /item/itemId, itemId
-        # Example: http://host/audiobook/itemId
-        # Example: http://host/some/path/item/itemId
-        # Will try to match itemId like lib_{32_hex_chars} or {uuid} or standard cuid/shortid
-        # cuid_pattern = r'c[a-z0-9]{24}' # Example CUID-like pattern
-        # hex_id_pattern = r'lib_[0-9a-f]{32}' # Example lib_ item ID
-        # generic_id_pattern = r'[a-zA-Z0-9_-]{7,}' # More generic ID (like shortid, cuid, uuid part)
+        # Use the utility to extract item_id
+        item_id = extract_item_id_from_url(url)
 
-        # Combined pattern: (server_part optional)/(path optional)/item_or_audiobook/ID
-        # This regex is a bit greedy and simplified. Robust parsing can be complex.
-        path_match = re.match(
-            r"(?:(https?://[^/]+))?(?:(?:/[^/]+)*?/)?(?:item|audiobook)/([a-zA-Z0-9_-]{7,}|lib_[0-9a-f]{32}|c[a-z0-9]{24})/?$",
-            url,
-        )
+        if item_id:
+            self.logger.info(
+                f"Extracted item ID '{item_id}' using utility from URL '{url}'."
+            )
+            # Attempt to determine server_url if item_id was found in a path-like structure
+            # This is a simplified approach; the original regex was more complex for server extraction.
+            # If the url contains '/item/', assume the part before it could be the server.
+            if "/item/" in url:
+                # Try to parse the server part from the URL
+                server_match = re.match(r"(https?://[^/]+)", url)
+                if server_match:
+                    final_server_url = server_match.group(1).strip("/")
+                    self.logger.info(
+                        f"Deduced server URL from input: {final_server_url}"
+                    )
 
-        if path_match:
-            server_url_from_re = path_match.group(1)  # Might be None
-            item_id = path_match.group(2)
+            # If server URL couldn't be deduced from input, or if input was just an ID,
+            # fall back to config host.
+            if not final_server_url:
+                if abs_host_config:
+                    final_server_url = abs_host_config
+                    self.logger.info(
+                        f"Using server URL from config: {final_server_url} for item ID '{item_id}'."
+                    )
+                else:
+                    messagebox.showerror(
+                        "Configuration Error",
+                        "Item ID found, but server URL could not be determined from input and is missing in config.toml.",
+                    )
+                    return None, None  # Cannot proceed without server URL
 
-            # If server_url_from_re is found, use it. Otherwise, assume it's just an ID and use config host.
-            final_server_url = server_url_from_re or abs_host_config
-
-            if not final_server_url:  # Still no server (neither in URL nor config)
-                messagebox.showerror(
-                    "Configuration Error",
-                    "Book URL does not contain a host, and Audiobookshelf host is not set in config.toml.",
-                )
-                return None, None
+            # Validate the final_server_url
             if not final_server_url.startswith(("http://", "https://")):
                 messagebox.showerror(
                     "Configuration Error",
-                    f"Audiobookshelf host '{final_server_url}' must include http:// or https://",
+                    f"Determined server URL '{final_server_url}' must include http:// or https://. Please check input or config.toml.",
                 )
                 return None, None
 
-            self.logger.info(
-                f"Extracted server '{final_server_url.strip('/')}' and item ID '{item_id}' from URL '{url}'."
+            return final_server_url, item_id
+        else:
+            # item_id was not found by the utility
+            messagebox.showerror(
+                "Invalid Input",
+                "Could not parse Item ID from URL using utility. Please use the full item URL (e.g., http://host/item/item-id) or just the item ID.",
             )
-            return final_server_url.strip("/"), item_id
-
-        # If no match with /item/ or /audiobook/, check if the URL is *just* an ID
-        # This check should be more specific to avoid misinterpreting parts of a path as an ID.
-        # Assuming item IDs are reasonably complex and don't contain slashes.
-        if "/" not in url and (
-            re.fullmatch(r"[a-zA-Z0-9_-]{7,}", url)
-            or re.fullmatch(r"lib_[0-9a-f]{32}", url)
-            or re.fullmatch(r"c[a-z0-9]{24}", url)
-        ):
-            if not abs_host_config:
-                messagebox.showerror(
-                    "Configuration Error",
-                    "URL appears to be an item ID, but Audiobookshelf host is not set in config.toml.",
-                )
-                return None, None
-            if not abs_host_config.startswith(("http://", "https://")):
-                messagebox.showerror(
-                    "Configuration Error",
-                    f"Audiobookshelf host in config ({abs_host_config}) must include http:// or https://",
-                )
-                return None, None
-
-            self.logger.info(
-                f"Assuming '{url}' is an item ID, using host from config: {abs_host_config.strip('/')}"
-            )
-            return abs_host_config.strip("/"), url
-
-        # Fallback if no pattern matches
-        # Try to extract a base URL if it looks like one, but no item_id found.
-        # This is less ideal as it means the user needs to provide just the ID.
-        base_url_match = re.match(r"(https?://[^/]+)", url)
-        if base_url_match and not abs_host_config:
-            # If user provided a base URL and no config host, this isn't enough.
-            messagebox.showinfo(
-                "Input Info",
-                "The entered URL seems to be a server address. Please append '/item/your-item-id' or provide just the Item ID if the host is in config.toml.",
-            )
-            return None, None  # Cannot determine item_id
-
-        # If we have a config host, and the URL doesn't match known patterns, it's likely an invalid input or just an ID.
-        # The above ID-only check should catch it if it's a valid ID.
-        # If it reaches here, the URL is problematic.
-        messagebox.showerror(
-            "Invalid Input",
-            "Could not parse Book URL. Please use the full item URL (e.g., http://host/item/item-id) or just the item ID if the host is configured.",
-        )
-        return None, None
+            return None, None
 
     def update_gui_progress(self, value, text):
         """Schedules a progress update in the main thread."""
