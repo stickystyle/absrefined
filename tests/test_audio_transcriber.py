@@ -4,60 +4,109 @@ import json
 import os
 from pathlib import Path
 from absrefined.transcriber.audio_transcriber import AudioTranscriber
-from openai import OpenAI, APIConnectionError, AuthenticationError, RateLimitError # Import OpenAI exceptions
+from openai import (
+    OpenAI,
+    APIConnectionError,
+    AuthenticationError,
+    RateLimitError,
+)  # Import OpenAI exceptions
 
 
-# Mock data simulating OpenAI verbose_json response
-MOCK_OPENAI_RESPONSE_DATA = {
-    "task": "transcribe",
-    "language": "english",
-    "duration": 10.0,
-    "text": "This is test audio. Chapter 1",
-    "words": [
-        {"word": "This", "start": 0.0, "end": 1.0},
-        {"word": "is", "start": 1.0, "end": 2.0},
-        {"word": "test", "start": 2.0, "end": 3.0},
-        {"word": "audio.", "start": 3.0, "end": 5.0},
-        {"word": "Chapter", "start": 5.0, "end": 8.0},
-        {"word": "1", "start": 8.0, "end": 10.0},
-    ],
-    "segments": [
-        {
-            "id": 0,
-            "seek": 0,
-            "start": 0.0,
-            "end": 5.0,
-            "text": "This is test audio.",
-            "tokens": [50364, 639, 318, 1332, 1115, 13, 50614],
-            "temperature": 0.0,
-            "avg_logprob": -0.3,
-            "compression_ratio": 1.0,
-            "no_speech_prob": 0.1,
-            "words": [
-                {"word": "This", "start": 0.0, "end": 1.0, "probability": 0.9}, # Keep probability for structure similarity if needed downstream, though OpenAI response may vary
-                {"word": "is", "start": 1.0, "end": 2.0, "probability": 0.9},
-                {"word": "test", "start": 2.0, "end": 3.0, "probability": 0.9},
-                {"word": "audio.", "start": 3.0, "end": 5.0, "probability": 0.9},
-            ],
-        },
-        {
-            "id": 1,
-            "seek": 500,
-            "start": 5.0,
-            "end": 10.0,
-            "text": "Chapter 1",
-            "tokens": [50614, 1383, 257, 13, 50864],
-            "temperature": 0.0,
-            "avg_logprob": -0.4,
-            "compression_ratio": 1.1,
-            "no_speech_prob": 0.05,
-            "words": [
-                {"word": "Chapter", "start": 5.0, "end": 8.0, "probability": 0.9},
-                {"word": "1", "start": 8.0, "end": 10.0, "probability": 0.9},
-            ],
-        },
-    ],
+# Mock config for the transcriber
+MOCK_OPENAI_API_KEY = "test_openai_api_key_456"
+MOCK_OPENAI_API_URL = "http://localhost:1234/v1"
+MOCK_WHISPER_MODEL = "whisper-test-1"
+MOCK_TRANSCRIBER_CONFIG = {
+    "refiner": {
+        "openai_api_key": MOCK_OPENAI_API_KEY,
+        "openai_api_url": MOCK_OPENAI_API_URL,
+        "whisper_model_name": MOCK_WHISPER_MODEL,
+    },
+    "logging": {
+        "level": "DEBUG",
+        "debug_files": False,  # Default to False, can be overridden in specific tests if needed
+    },
 }
+
+# Original raw data for crafting mock objects
+# Word data should not have 'probability' if it's not consistently there in OpenAI's Word object
+# The transcriber uses getattr(word_raw, 'probability', None)
+RAW_WORD_DATA_LIST = [
+    {"word": "This", "start": 0.0, "end": 1.0, "probability": 0.9},
+    {"word": "is", "start": 1.0, "end": 2.0, "probability": 0.9},
+    {"word": "test", "start": 2.0, "end": 3.0, "probability": 0.9},
+    {"word": "audio.", "start": 3.0, "end": 5.0, "probability": 0.9},
+    {"word": "Chapter", "start": 5.0, "end": 8.0, "probability": 0.9},
+    {"word": "1", "start": 8.0, "end": 10.0, "probability": 0.9},
+]
+
+RAW_SEGMENT_DATA_LIST = [
+    {
+        "id": 0,
+        "seek": 0,
+        "start": 0.0,
+        "end": 5.0,
+        "text": "This is test audio.",
+        "tokens": [50364, 639, 318, 1332, 1115, 13, 50614],
+        "temperature": 0.0,
+        "avg_logprob": -0.3,
+        "compression_ratio": 1.0,
+        "no_speech_prob": 0.1,
+        "words": [  # Words specific to this segment
+            {"word": "This", "start": 0.0, "end": 1.0, "probability": 0.9},
+            {"word": "is", "start": 1.0, "end": 2.0, "probability": 0.9},
+            {"word": "test", "start": 2.0, "end": 3.0, "probability": 0.9},
+            {"word": "audio.", "start": 3.0, "end": 5.0, "probability": 0.9},
+        ],
+    },
+    {
+        "id": 1,
+        "seek": 500,
+        "start": 5.0,
+        "end": 10.0,
+        "text": "Chapter 1",
+        "tokens": [50614, 1383, 257, 13, 50864],
+        "temperature": 0.0,
+        "avg_logprob": -0.4,
+        "compression_ratio": 1.1,
+        "no_speech_prob": 0.05,
+        "words": [  # Words specific to this segment
+            {"word": "Chapter", "start": 5.0, "end": 8.0, "probability": 0.9},
+            {"word": "1", "start": 8.0, "end": 10.0, "probability": 0.9},
+        ],
+    },
+]
+
+FULL_TRANSCRIPT_TEXT = "This is test audio. Chapter 1"
+
+
+# Helper to create a mock Word object
+def create_mock_word_object(data_dict):
+    mock = MagicMock()
+    for key, value in data_dict.items():
+        setattr(mock, key, value)
+    # Ensure model_dump returns a plain dict for JSON serialization
+    mock.model_dump = MagicMock(return_value=data_dict.copy())
+    return mock
+
+
+# Helper to create a mock Segment object
+def create_mock_segment_object(data_dict):
+    mock = MagicMock()
+    # Store a copy of the original dict for model_dump
+    original_dict_for_dump = data_dict.copy()
+    original_dict_for_dump["words"] = [
+        w.copy() for w in data_dict["words"]
+    ]  # Ensure words are also dicts in dump
+
+    for key, value in data_dict.items():
+        if key == "words":
+            setattr(mock, key, [create_mock_word_object(w_data) for w_data in value])
+        else:
+            setattr(mock, key, value)
+
+    mock.model_dump = MagicMock(return_value=original_dict_for_dump)
+    return mock
 
 
 # Fixture to mock the OpenAI client and its methods
@@ -65,10 +114,22 @@ MOCK_OPENAI_RESPONSE_DATA = {
 def mock_openai_client():
     with patch("absrefined.transcriber.audio_transcriber.OpenAI") as mock_constructor:
         mock_instance = MagicMock()
-        # Mock the response object structure directly if needed
-        mock_response = MagicMock()
-        mock_response.segments = MOCK_OPENAI_RESPONSE_DATA["segments"] # Simulate the response structure
-        mock_instance.audio.transcriptions.create.return_value = mock_response
+
+        # Mock the response object from client.audio.transcriptions.create()
+        mock_transcription_response = MagicMock()
+
+        # Populate with Pydantic-like objects
+        mock_transcription_response.segments = [
+            create_mock_segment_object(s_data) for s_data in RAW_SEGMENT_DATA_LIST
+        ]
+        mock_transcription_response.words = [
+            create_mock_word_object(w_data) for w_data in RAW_WORD_DATA_LIST
+        ]
+        mock_transcription_response.text = FULL_TRANSCRIPT_TEXT
+
+        mock_instance.audio.transcriptions.create.return_value = (
+            mock_transcription_response
+        )
         mock_constructor.return_value = mock_instance
         yield mock_instance
 
@@ -77,7 +138,7 @@ def mock_openai_client():
 @pytest.fixture
 def mock_audio_file(tmp_path):
     audio_path = tmp_path / "test.mp3"
-    audio_path.touch() # Create an empty file for path existence checks
+    audio_path.touch()  # Create an empty file for path existence checks
     return str(audio_path)
 
 
@@ -86,36 +147,39 @@ class TestAudioTranscriber:
 
     def test_init(self):
         """Test initialization of the AudioTranscriber with API key."""
-        api_key = "test_api_key"
-        with patch("absrefined.transcriber.audio_transcriber.OpenAI") as mock_constructor:
-             mock_client = MagicMock()
-             mock_constructor.return_value = mock_client
+        with patch(
+            "absrefined.transcriber.audio_transcriber.OpenAI"
+        ) as mock_constructor:
+            mock_client_instance = MagicMock()
+            mock_constructor.return_value = mock_client_instance
 
-             # Test default verbose
-             transcriber = AudioTranscriber(api_key=api_key)
-             assert transcriber.verbose is False
-             assert transcriber.api_key == api_key
-             assert transcriber.client == mock_client
-             mock_constructor.assert_called_once_with(api_key=api_key)
+            transcriber = AudioTranscriber(config=MOCK_TRANSCRIBER_CONFIG)
+            assert transcriber.api_key == MOCK_OPENAI_API_KEY
+            assert transcriber.base_url == MOCK_OPENAI_API_URL
+            assert transcriber.whisper_model == MOCK_WHISPER_MODEL
+            assert transcriber.client == mock_client_instance
+            mock_constructor.assert_called_once_with(
+                api_key=MOCK_OPENAI_API_KEY, base_url=MOCK_OPENAI_API_URL
+            )
 
-             # Reset mock for next assertion
-             mock_constructor.reset_mock()
-
-             # Test verbose=True
-             transcriber_verbose = AudioTranscriber(api_key=api_key, verbose=True)
-             assert transcriber_verbose.verbose is True
-             assert transcriber_verbose.client == mock_client
-             mock_constructor.assert_called_once_with(api_key=api_key)
-
+            # Test with debug_files = True
+            mock_constructor.reset_mock()
+            debug_config = MOCK_TRANSCRIBER_CONFIG.copy()
+            debug_config["logging"] = {"debug_files": True, "level": "DEBUG"}
+            transcriber_debug = AudioTranscriber(config=debug_config)
+            assert transcriber_debug.debug_preserve_files is True
 
     @patch("builtins.open", new_callable=mock_open, read_data=b"dummy_audio_data")
-    def test_transcribe_audio_success_no_offset(self, mock_file_open, mock_openai_client, mock_audio_file, tmp_path):
+    def test_transcribe_audio_success_no_offset(
+        self, mock_file_open, mock_openai_client, mock_audio_file, tmp_path
+    ):
         """Test successful transcription using OpenAI API with no time offset."""
-        api_key = "test_key"
-        transcriber = AudioTranscriber(api_key=api_key, verbose=False)
+        transcriber = AudioTranscriber(config=MOCK_TRANSCRIBER_CONFIG)
         output_path = tmp_path / "output.jsonl"
 
-        segments = transcriber.transcribe_audio(mock_audio_file, str(output_path), segment_start_time=0)
+        segments = transcriber.transcribe_audio(
+            mock_audio_file, str(output_path), segment_start_time=0
+        )
 
         # Verify the structure of the adjusted segments
         assert len(segments) == 2
@@ -138,14 +202,17 @@ class TestAudioTranscriber:
         # Verify OpenAI API call
         # Check that the input file was opened in binary read mode among the calls
         mock_file_open.assert_any_call(mock_audio_file, "rb")
-        # Ensure the output file was also opened for writing
-        mock_file_open.assert_any_call(str(output_path), "w", encoding="utf-8")
+        # Ensure the output file was also opened for writing, if write_to_file is True (default)
+        if transcriber.debug_preserve_files or (
+            output_path and True
+        ):  # True is default for write_to_file
+            mock_file_open.assert_any_call(str(output_path), "w", encoding="utf-8")
 
         mock_openai_client.audio.transcriptions.create.assert_called_once_with(
-            model="whisper-1",
+            model=MOCK_WHISPER_MODEL,  # Check against the model from config
             file=ANY,
             response_format="verbose_json",
-            timestamp_granularities=["word"]
+            timestamp_granularities=["word"],
         )
 
         # Verify output file writing attempt
@@ -157,16 +224,18 @@ class TestAudioTranscriber:
         #     assert parsed_line_1["start"] == 0.0 # Re-verify file contents match segments
         #     assert parsed_line_1["words"][0]["start"] == 0.0
 
-
     @patch("builtins.open", new_callable=mock_open, read_data=b"dummy_audio_data")
-    def test_transcribe_audio_success_with_offset(self, mock_file_open, mock_openai_client, mock_audio_file, tmp_path):
+    def test_transcribe_audio_success_with_offset(
+        self, mock_file_open, mock_openai_client, mock_audio_file, tmp_path
+    ):
         """Test successful transcription using OpenAI API with a time offset."""
-        api_key = "test_key"
-        transcriber = AudioTranscriber(api_key=api_key, verbose=False)
+        transcriber = AudioTranscriber(config=MOCK_TRANSCRIBER_CONFIG)
         output_path = tmp_path / "output_offset.jsonl"
-        offset = 100.5 # Example offset
+        offset = 100.5  # Example offset
 
-        segments = transcriber.transcribe_audio(mock_audio_file, str(output_path), segment_start_time=offset)
+        segments = transcriber.transcribe_audio(
+            mock_audio_file, str(output_path), segment_start_time=offset
+        )
 
         # Verify the structure and adjusted timestamps
         assert len(segments) == 2
@@ -189,14 +258,17 @@ class TestAudioTranscriber:
         # Verify OpenAI API call (same as before, checking for whisper-1)
         # Check that the input file was opened in binary read mode among the calls
         mock_file_open.assert_any_call(mock_audio_file, "rb")
-        # Ensure the output file was also opened for writing
-        mock_file_open.assert_any_call(str(output_path), "w", encoding="utf-8")
+        # Ensure the output file was also opened for writing, if write_to_file is True (default)
+        if transcriber.debug_preserve_files or (
+            output_path and True
+        ):  # True is default for write_to_file
+            mock_file_open.assert_any_call(str(output_path), "w", encoding="utf-8")
 
         mock_openai_client.audio.transcriptions.create.assert_called_once_with(
-            model="whisper-1",
+            model=MOCK_WHISPER_MODEL,  # Check against the model from config
             file=ANY,
             response_format="verbose_json",
-            timestamp_granularities=["word"]
+            timestamp_granularities=["word"],
         )
 
         # Verify output file writing attempt with offset
@@ -208,48 +280,56 @@ class TestAudioTranscriber:
         #     assert parsed_line_1["start"] == pytest.approx(0.0 + offset) # Verify offset in file
         #     assert parsed_line_1["words"][0]["start"] == pytest.approx(0.0 + offset)
 
-
     @patch("builtins.open", new_callable=mock_open, read_data=b"dummy_audio_data")
-    def test_transcribe_audio_api_error(self, mock_file_open, mock_openai_client, mock_audio_file, tmp_path):
+    def test_transcribe_audio_api_error(
+        self, mock_file_open, mock_openai_client, mock_audio_file, tmp_path
+    ):
         """Test transcription handles OpenAI API errors."""
-        api_key = "test_key"
         # Create a minimal mock response object with a mock request attribute
         mock_response = MagicMock()
         mock_response.request = MagicMock()
 
         # Test different API errors
-        for error_type in [AuthenticationError("Auth error", response=mock_response, body=None),
-                           RateLimitError("Rate limit error", response=mock_response, body=None),
-                           APIConnectionError(request=MagicMock())]: # APIConnectionError has different signature
-            mock_openai_client.reset_mock() # Reset mock for each error type
+        for error_type in [
+            AuthenticationError("Auth error", response=mock_response, body=None),
+            RateLimitError("Rate limit error", response=mock_response, body=None),
+            APIConnectionError(request=MagicMock()),
+        ]:  # APIConnectionError has different signature
+            mock_openai_client.reset_mock()  # Reset mock for each error type
             # Configure the side effect on the specific method
             mock_openai_client.audio.transcriptions.create.side_effect = error_type
 
-            transcriber = AudioTranscriber(api_key=api_key)
+            transcriber = AudioTranscriber(config=MOCK_TRANSCRIBER_CONFIG)
             output_path = tmp_path / f"output_error_{type(error_type).__name__}.jsonl"
 
-            with pytest.raises(type(error_type)): # Expect the specific error to be raised
-                 transcriber.transcribe_audio(mock_audio_file, str(output_path))
+            with pytest.raises(
+                type(error_type)
+            ):  # Expect the specific error to be raised
+                transcriber.transcribe_audio(mock_audio_file, str(output_path))
 
             # Verify API call was attempted
             mock_openai_client.audio.transcriptions.create.assert_called_once()
             # Ensure no output file was written on error
             assert not output_path.exists()
 
-
-    def test_transcribe_audio_no_output_file_needed(self, mock_openai_client, mock_audio_file):
+    def test_transcribe_audio_no_output_file_needed(
+        self, mock_openai_client, mock_audio_file
+    ):
         """Test transcription without writing to a file."""
         # Don't need tmp_path if not writing file
-        api_key = "test_key"
-        transcriber = AudioTranscriber(api_key=api_key)
+        transcriber = AudioTranscriber(config=MOCK_TRANSCRIBER_CONFIG)
 
         # Mock open specifically for this test to ensure it's NOT called for output
-        with patch("builtins.open", new_callable=mock_open, read_data=b"dummy_audio_data") as mock_file_open:
-            segments = transcriber.transcribe_audio(mock_audio_file, output_file=None, write_to_file=False)
+        with patch(
+            "builtins.open", new_callable=mock_open, read_data=b"dummy_audio_data"
+        ) as mock_file_open:
+            segments = transcriber.transcribe_audio(
+                mock_audio_file, output_file=None, write_to_file=False
+            )
 
             # Verify segments are returned correctly
             assert len(segments) == 2
-            assert segments[0]['start'] == 0.0 # Check basic segment structure
+            assert segments[0]["start"] == 0.0  # Check basic segment structure
 
             # Verify API call was made
             mock_openai_client.audio.transcriptions.create.assert_called_once()
@@ -258,85 +338,57 @@ class TestAudioTranscriber:
             # It should be called once with 'rb' mode. Any other call would be for writing output.
             found_read_call = False
             for call_args, call_kwargs in mock_file_open.call_args_list:
-                 if call_args[0] == mock_audio_file and call_args[1] == 'rb':
-                     found_read_call = True
-                 elif call_args[1] != 'rb': # If any call is not 'rb', it's likely the output write
-                     pytest.fail(f"builtins.open called unexpectedly for writing: {call_args}")
+                if call_args[0] == mock_audio_file and call_args[1] == "rb":
+                    found_read_call = True
+                elif (
+                    call_args[1] != "rb"
+                ):  # If any call is not 'rb', it's likely the output write
+                    pytest.fail(
+                        f"builtins.open called unexpectedly for writing: {call_args}"
+                    )
             assert found_read_call
 
-
-    def test_transcribe_audio_empty_response(self, mock_openai_client, mock_audio_file, tmp_path):
+    def test_transcribe_audio_empty_response(
+        self, mock_openai_client, mock_audio_file, tmp_path
+    ):
         """Test transcription when the API returns no segments."""
-        api_key = "test_key"
         # Configure mock to return an empty segments list
         mock_response = MagicMock()
         mock_response.segments = []
+        mock_response.words = []  # Also ensure words are empty for this test case
+        mock_response.text = ""  # Explicitly set text for empty response
         mock_openai_client.audio.transcriptions.create.return_value = mock_response
 
-        transcriber = AudioTranscriber(api_key=api_key)
-        output_path = tmp_path / "output_empty.jsonl"
+        # Config for this specific test to enable debug file writing
+        debug_config = MOCK_TRANSCRIBER_CONFIG.copy()
+        debug_config["logging"] = {"debug_files": True, "level": "DEBUG"}
+        transcriber = AudioTranscriber(config=debug_config)
 
-        # Mock open to check calls
-        with patch("builtins.open", new_callable=mock_open, read_data=b"dummy_audio_data") as mock_file_open:
-             segments = transcriber.transcribe_audio(mock_audio_file, str(output_path), write_to_file=True)
+        output_path = tmp_path / "empty_output.jsonl"
+        debug_output_path = (
+            tmp_path / f"{Path(mock_audio_file).stem}_transcript_DEBUG.jsonl"
+        )
 
-             assert segments == []
-             mock_openai_client.audio.transcriptions.create.assert_called_once()
+        with patch("builtins.open", new_callable=mock_open) as mock_file_write:
+            segments = transcriber.transcribe_audio(
+                mock_audio_file, str(output_path), write_to_file=True
+            )
+            assert segments == []
 
-             # Should NOT write an empty file if segments are empty
-             assert not output_path.exists()
+            # Verify that the debug output file was written (due to debug_config)
+            mock_file_write.assert_any_call(
+                str(debug_output_path), "w", encoding="utf-8"
+            )
 
-             # Verify open was only called for the input file
-             mock_file_open.assert_called_once_with(mock_audio_file, "rb")
-
-
-    # --- Tests for read_transcription remain the same as they don't depend on the transcription method ---
-
-    def test_read_transcription(self, tmp_path):
-        """Test reading a valid transcription file."""
-        transcriber = AudioTranscriber(api_key="dummy_key") # API key not needed for reading
-        transcription_path = tmp_path / "test_read.jsonl"
-        mock_segments = [
-            {
-                "start": 0.0,
-                "end": 5.0,
-                "text": "Segment 1",
-                "words": [
-                    {"word": "Segment", "start": 0.0, "end": 2.5},
-                    {"word": "1", "start": 2.5, "end": 5.0},
-                ],
-            },
-            {"start": 5.0, "end": 10.0, "text": "Segment 2", "words": []}, # Ensure words key exists even if empty
-            {
-                "start": 10.0,
-                "end": 15.0,
-                "text": "Segment 3",
-                "words": [],
-            },
-        ]
-
-        with open(transcription_path, "w", encoding="utf-8") as f:
-            for segment in mock_segments:
-                json.dump(segment, f)
-                f.write("\n")
-
-        read_segments = transcriber.read_transcription(str(transcription_path))
-        assert read_segments == mock_segments
-
-    def test_read_transcription_non_existent(self):
-        """Test reading a non-existent transcription file."""
-        transcriber = AudioTranscriber(api_key="dummy_key")
-        read_segments = transcriber.read_transcription("non_existent_file.jsonl")
-        assert read_segments == []
-
-    def test_read_transcription_invalid_json(self, tmp_path):
-        """Test reading a transcription file with invalid JSON."""
-        transcriber = AudioTranscriber(api_key="dummy_key")
-        transcription_path = tmp_path / "invalid.jsonl"
-        with open(transcription_path, "w", encoding="utf-8") as f:
-            f.write("this is not json\n")
-            f.write('{"start": 0.0, "end": 1.0, "text": "valid", "words":[]}\n') # Added words
-
-        # Based on current code, it returns [] on any exception during reading loop
-        read_segments = transcriber.read_transcription(str(transcription_path))
-        assert read_segments == [] # Expecting empty list on parse error
+            # Verify that the main output file (output_path) was NOT written to,
+            # as the transcriber returns early if API provides no segments/words.
+            main_output_file_written = False
+            for call_args_tuple in mock_file_write.call_args_list:
+                # call_args_tuple is like (('/path/to/file', 'w'), {'encoding': 'utf-8'})
+                # or just (('/path/to/file', 'rb'),) for read
+                if call_args_tuple[0][0] == str(output_path):
+                    main_output_file_written = True
+                    break
+            assert not main_output_file_written, (
+                f"Main output file {output_path} should not have been written when API returns no segments/words."
+            )

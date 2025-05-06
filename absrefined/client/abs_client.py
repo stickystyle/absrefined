@@ -4,9 +4,6 @@ from typing import Dict, List, Any
 from tqdm import tqdm
 import logging
 
-# Will be imported from utils
-from absrefined.utils.timestamp import format_timestamp, parse_timestamp
-
 
 class AudiobookshelfClient:
     """Client for interacting with the Audiobookshelf API."""
@@ -18,26 +15,32 @@ class AudiobookshelfClient:
         Args:
             config (Dict[str, Any]): Configuration dictionary containing
                                      audiobookshelf host, api_key, and optional timeout.
-        
+
         Raises:
             KeyError: If required configuration keys ('host', 'api_key') are missing.
         """
         abs_config = config.get("audiobookshelf", {})
-        
+
         self.server_url = abs_config.get("host")
         if not self.server_url:
-            raise KeyError("Audiobookshelf host not found in configuration ('audiobookshelf.host')")
+            raise KeyError(
+                "Audiobookshelf host not found in configuration ('audiobookshelf.host')"
+            )
         self.server_url = self.server_url.rstrip("/")
 
         self.api_key = abs_config.get("api_key")
         if not self.api_key:
-            raise KeyError("Audiobookshelf API key not found in configuration ('audiobookshelf.api_key')")
+            raise KeyError(
+                "Audiobookshelf API key not found in configuration ('audiobookshelf.api_key')"
+            )
 
-        self.request_timeout = abs_config.get("timeout", 30) # Default to 30 seconds
-        
-        self.user_id = None # Remains for compatibility if some ABS versions return it with API key auth
+        self.request_timeout = abs_config.get("timeout", 30)  # Default to 30 seconds
+
+        # self.user_id = None # Removed unused instance variable
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.logger.info(f"AudiobookshelfClient initialized for host: {self.server_url}")
+        self.logger.info(
+            f"AudiobookshelfClient initialized for host: {self.server_url}"
+        )
 
     def _get_auth_headers(self) -> Dict[str, str]:
         """Returns the authorization headers for API requests."""
@@ -56,9 +59,11 @@ class AudiobookshelfClient:
 
         try:
             self.logger.debug(f"Fetching details for item {item_id} from {details_url}")
-            response = requests.get(details_url, headers=headers, timeout=self.request_timeout)
-            response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
-            
+            response = requests.get(
+                details_url, headers=headers, timeout=self.request_timeout
+            )
+            response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
+
             details = response.json()
 
             self.logger.debug("Item details structure:")
@@ -83,9 +88,11 @@ class AudiobookshelfClient:
             return details
         except requests.exceptions.RequestException as e:
             self.logger.error(f"Error getting item details for {item_id}: {e}")
-            return {} # Or raise a custom exception
-        except Exception as e: # Catch other unexpected errors
-            self.logger.error(f"Unexpected error getting item details for {item_id}: {e}")
+            return {}  # Or raise a custom exception
+        except Exception as e:  # Catch other unexpected errors
+            self.logger.error(
+                f"Unexpected error getting item details for {item_id}: {e}"
+            )
             return {}
 
     def get_item_chapters(self, item_id: str) -> List[Dict]:
@@ -103,30 +110,32 @@ class AudiobookshelfClient:
         """
         details = self.get_item_details(item_id)
         if not details:
-            self.logger.error(f"Failed to get item details for {item_id}, cannot download.")
+            self.logger.error(
+                f"Failed to get item details for {item_id}, cannot download."
+            )
             return ""
 
         audio_files_info = details.get("media", {}).get("audioFiles", [])
         if not audio_files_info:
-            self.logger.warning(f"No audio tracks (audioFiles) found in media for item {item_id}")
-            # Try looking for legacy 'tracks' if 'audioFiles' is empty (older ABS versions?)
-            # audio_files_info = details.get("media", {}).get("tracks", [])
-            # if not audio_files_info:
-            #     self.logger.error(f"No audio tracks (audioFiles or tracks) found for item {item_id}")
-            #     return ""
+            self.logger.warning(
+                f"No audio tracks (audioFiles) found in media for item {item_id}"
+            )
+            # Removed commented-out legacy 'tracks' lookup
             return ""
 
         self.logger.debug(f"Found {len(audio_files_info)} audio file entries.")
         # Assuming the first audio file is the one to download, or that they are concatenated.
         # The API structure seems to point to 'ino' for the download URL part.
-        
+
         # Prefer audioFiles structure if available
         if audio_files_info and "ino" in audio_files_info[0]:
             file_ino = audio_files_info[0].get("ino")
         else:
-            self.logger.error(f"Could not determine 'ino' for audio download from item {item_id}")
+            self.logger.error(
+                f"Could not determine 'ino' for audio download from item {item_id}"
+            )
             return ""
-            
+
         if not file_ino:
             self.logger.error(f"Audio file 'ino' is missing for item {item_id}")
             return ""
@@ -135,20 +144,32 @@ class AudiobookshelfClient:
         headers = self._get_auth_headers()
 
         try:
-            self.logger.info(f"Downloading complete audio file from {file_url} to {output_path}")
-            response = requests.get(file_url, headers=headers, stream=True, timeout=self.request_timeout)
+            self.logger.info(
+                f"Downloading complete audio file from {file_url} to {output_path}"
+            )
+            response = requests.get(
+                file_url, headers=headers, stream=True, timeout=self.request_timeout
+            )
             response.raise_for_status()
 
             content_length = response.headers.get("Content-Length")
-            
+
             os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
 
             if content_length and content_length.isdigit():
                 total_size = int(content_length)
-                self.logger.info(f"Downloading approximately {total_size / (1024 * 1024):.2f} MB")
-                with open(output_path, "wb") as f, tqdm(
-                    total=total_size, unit="B", unit_scale=True, desc=f"Downloading {os.path.basename(output_path)}"
-                ) as pbar:
+                self.logger.info(
+                    f"Downloading approximately {total_size / (1024 * 1024):.2f} MB"
+                )
+                with (
+                    open(output_path, "wb") as f,
+                    tqdm(
+                        total=total_size,
+                        unit="B",
+                        unit_scale=True,
+                        desc=f"Downloading {os.path.basename(output_path)}",
+                    ) as pbar,
+                ):
                     for chunk in response.iter_content(chunk_size=8192):
                         if chunk:
                             f.write(chunk)
@@ -159,7 +180,7 @@ class AudiobookshelfClient:
                     for chunk in response.iter_content(chunk_size=8192):
                         if chunk:
                             f.write(chunk)
-            
+
             self.logger.info(f"Successfully downloaded audio file to {output_path}")
             return output_path
         except requests.exceptions.RequestException as e:
@@ -169,25 +190,11 @@ class AudiobookshelfClient:
             self.logger.error(f"Unexpected error downloading audio for {item_id}: {e}")
             return ""
 
+    # Removed unused _fix_chapter_boundaries method
 
-    def _fix_chapter_boundaries(self, chapters: List[Dict]) -> None:
-        """
-        Ensures chapter end times match the start time of the next chapter.
-        This is often handled by Audiobookshelf server-side, but can be done client-side.
-        This method modifies the list in-place.
-        Assumes chapters are sorted by start time.
-        """
-        # This logic might be better handled by the server or might be too presumptive.
-        # For now, let's assume the server handles reconciling end times, or
-        # that only start times are primarily sent.
-        self.logger.debug("Chapter boundary fixing skipped; server or specific update method should handle this.")
-        # for i in range(len(chapters) - 1):
-        #     chapters[i]['end'] = chapters[i+1]['start']
-        # if chapters: # Ensure the last chapter has an end time if needed by API (e.g., book duration)
-        #     # This would require knowing the total duration of the media.
-        #     pass
-
-    def update_chapters_start_time(self, item_id: str, chapter_updates: List[Dict]) -> bool:
+    def update_chapters_start_time(
+        self, item_id: str, chapter_updates: List[Dict]
+    ) -> bool:
         """
         Update start times for a list of chapters by their IDs.
         This fetches all existing chapters, updates the relevant ones, and then PUTs all chapters back.
@@ -200,83 +207,105 @@ class AudiobookshelfClient:
         Returns:
             bool: True if successful, False otherwise.
         """
-        self.logger.info(f"Attempting to update start times for {len(chapter_updates)} chapters in item {item_id}.")
-        
+        self.logger.info(
+            f"Attempting to update start times for {len(chapter_updates)} chapters in item {item_id}."
+        )
+
         current_chapters = self.get_item_chapters(item_id)
         if not current_chapters:
-            self.logger.error(f"Could not retrieve current chapters for item {item_id}. Cannot update start times.")
+            self.logger.error(
+                f"Could not retrieve current chapters for item {item_id}. Cannot update start times."
+            )
             return False
 
         self.logger.debug(f"Retrieved {len(current_chapters)} current chapters.")
 
         updated_count = 0
-        chapters_map = {chap['id']: chap for chap in current_chapters}
+        chapters_map = {chap["id"]: chap for chap in current_chapters}
 
         for update in chapter_updates:
-            chap_id = update.get('id')
-            new_start_time = update.get('start')
+            chap_id = update.get("id")
+            new_start_time = update.get("start")
 
             if not chap_id or new_start_time is None:
-                self.logger.warning(f"Skipping update due to missing id or start time: {update}")
+                self.logger.warning(
+                    f"Skipping update due to missing id or start time: {update}"
+                )
                 continue
 
             if chap_id in chapters_map:
                 try:
                     new_start_float = float(new_start_time)
-                    if chapters_map[chap_id]['start'] != new_start_float:
-                        self.logger.debug(f"Updating chapter ID {chap_id}: old_start={chapters_map[chap_id]['start']}, new_start={new_start_float}")
-                        chapters_map[chap_id]['start'] = new_start_float
+                    if chapters_map[chap_id]["start"] != new_start_float:
+                        self.logger.debug(
+                            f"Updating chapter ID {chap_id}: old_start={chapters_map[chap_id]['start']}, new_start={new_start_float}"
+                        )
+                        chapters_map[chap_id]["start"] = new_start_float
                         updated_count += 1
                     else:
-                        self.logger.debug(f"Chapter ID {chap_id}: start time {new_start_float} is already set. No change.")
+                        self.logger.debug(
+                            f"Chapter ID {chap_id}: start time {new_start_float} is already set. No change."
+                        )
                 except ValueError:
-                    self.logger.warning(f"Invalid start time format for chapter ID {chap_id}: {new_start_time}. Skipping.")
+                    self.logger.warning(
+                        f"Invalid start time format for chapter ID {chap_id}: {new_start_time}. Skipping."
+                    )
             else:
-                self.logger.warning(f"Chapter ID {chap_id} not found in current chapters. Skipping update for this chapter.")
+                self.logger.warning(
+                    f"Chapter ID {chap_id} not found in current chapters. Skipping update for this chapter."
+                )
 
         if updated_count == 0:
             self.logger.info("No actual changes to chapter start times were needed.")
             # Depending on desired behavior, this could be True (no failure) or False (no update made)
             # Let's return True as the operation didn't fail, even if no data changed.
-            return True 
+            return True
 
         # Convert map back to list for updating
-        final_chapters_list = sorted(list(chapters_map.values()), key=lambda x: x['start'])
-        
+        final_chapters_list = sorted(
+            list(chapters_map.values()), key=lambda x: x["start"]
+        )
+
         # The ABS API typically requires the 'end' field.
         # We need to recalculate end times based on the new start times.
         # The last chapter's end time should ideally be the media duration.
         # This is a complex part if media duration isn't easily available or if overlaps are an issue.
-        
+
         # Simple fix for end times: next chapter's start. Last chapter's end remains.
         # This might not be perfect if the server doesn't auto-adjust the last chapter's end.
         for i in range(len(final_chapters_list) - 1):
-            final_chapters_list[i]['end'] = final_chapters_list[i+1]['start']
-        
+            final_chapters_list[i]["end"] = final_chapters_list[i + 1]["start"]
+
         # If the last chapter's 'end' needs to be the total duration, that info is missing here.
         # The server might handle this. If not, the last chapter's 'end' might be incorrect.
-        # self.logger.debug(f"Final list of chapters to send: {final_chapters_list}")
+        # Removed commented-out debug log
 
-        update_url = f"{self.server_url}/api/items/{item_id}/chapters" # Define update_url here
+        update_url = f"{self.server_url}/api/items/{item_id}/chapters"  # Removed redundant comment
 
-        self.logger.info(f"Sending {len(final_chapters_list)} chapter start time updates for item {item_id} to {update_url}")
+        self.logger.info(
+            f"Sending {len(final_chapters_list)} chapter start time updates for item {item_id} to {update_url}"
+        )
         payload = {"chapters": final_chapters_list}
         self.logger.debug(f"Bulk update payload: {payload}")
 
-        headers = self._get_auth_headers() # Define headers
-        headers["Content-Type"] = "application/json" # Add Content-Type
+        headers = self._get_auth_headers()  # Removed redundant comment
+        headers["Content-Type"] = "application/json"  # Add Content-Type
 
-        self.logger.debug(f"CONFIRMING: About to call POST on URL: {update_url} with payload: {payload}")
+        self.logger.debug(
+            f"CONFIRMING: About to call POST on URL: {update_url} with payload: {payload}"
+        )
 
         try:
-            response = requests.post(update_url, headers=headers, json=payload, timeout=self.request_timeout)
+            response = requests.post(
+                update_url, headers=headers, json=payload, timeout=self.request_timeout
+            )
             response.raise_for_status()
-            
+
             self.logger.info(f"Chapters updated successfully for item {item_id}.")
             return True
         except requests.exceptions.RequestException as e:
             self.logger.error(f"Error updating chapters for item {item_id}: {e}")
-            if hasattr(e, 'response') and e.response is not None:
+            if hasattr(e, "response") and e.response is not None:
                 self.logger.error(f"Response content: {e.response.text}")
             return False
         except Exception as e:

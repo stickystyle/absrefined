@@ -47,7 +47,8 @@ def mock_abs_response():
         status_code=200,
         json_data=None,
         content=None,
-        raise_for_status=None
+        raise_for_status=None,
+        headers=None
     ):
         mock_resp = MagicMock()
         # Set status code
@@ -65,10 +66,17 @@ def mock_abs_response():
         # Set content attribute and iter_content method
         if content is not None:
             mock_resp.content = content
-            mock_resp.iter_content = MagicMock(return_value=[content])
+            # Make iter_content more realistic for chunking if content is bytes
+            if isinstance(content, bytes):
+                mock_resp.iter_content = MagicMock(return_value=iter([content[i:i+8192] for i in range(0, len(content), 8192)]))
+            else: # For non-bytes content, original behavior
+                mock_resp.iter_content = MagicMock(return_value=iter([content]))
             
         # Set text attribute for error messages
         mock_resp.text = "Mock response text"
+
+        # Set headers
+        mock_resp.headers = headers if headers is not None else {}
         
         return mock_resp
     return _mock_response
@@ -133,21 +141,59 @@ def mock_audio_file(tmp_path):
 
 @pytest.fixture
 def mock_transcript_data():
-    """Mock transcription data from whisper-mlx."""
-    chapter_segments = {}
-    
-    # Load real chapter segment data from the chapter-segments directory
-    segments_dir = Path("chapter-segments")
-    if segments_dir.exists():
-        for segment_file in segments_dir.glob("*.jsonl"):
-            chapter_name = segment_file.stem
+    """Mock transcription data (previously from whisper-mlx, now hardcoded)."""
+    # chapter_segments = {}
+    # # Load real chapter segment data from the chapter-segments directory
+    # segments_dir = Path("chapter-segments")
+    # if segments_dir.exists():
+    #     for segment_file in segments_dir.glob("*.jsonl"):
+    #         chapter_name = segment_file.stem
             
-            with open(segment_file, "r", encoding="utf-8") as f:
-                # Load each line as JSON
-                segments = [json.loads(line) for line in f]
-                chapter_segments[chapter_name] = segments
-    
-    return chapter_segments
+    #         with open(segment_file, "r", encoding="utf-8") as f:
+    #             # Load each line as JSON
+    #             segments = [json.loads(line) for line in f]
+    #             chapter_segments[chapter_name] = segments
+    # return chapter_segments
+
+    # Return a hardcoded dictionary with a sample chapter's transcript segments
+    # This structure should match what the tests in test_chapter_refiner.py expect.
+    # The segments should have 'start', 'end', 'text', and 'words' (list of dicts with 'word', 'start', 'end').
+    return {
+        "Chapter 1": [
+            {
+                "start": 0.0, "end": 5.2, "text": "It was a dark and stormy night.",
+                "words": [
+                    {"word": "It", "start": 0.0, "end": 0.5, "probability": 0.9},
+                    {"word": "was", "start": 0.6, "end": 1.0, "probability": 0.9},
+                    {"word": "a", "start": 1.1, "end": 1.3, "probability": 0.9},
+                    {"word": "dark", "start": 1.4, "end": 2.0, "probability": 0.9},
+                    {"word": "and", "start": 2.1, "end": 2.5, "probability": 0.9},
+                    {"word": "stormy", "start": 2.6, "end": 3.5, "probability": 0.9},
+                    {"word": "night.", "start": 3.6, "end": 5.2, "probability": 0.9},
+                ]
+            },
+            {
+                "start": 6.0, "end": 10.5, "text": "Suddenly, a shot rang out!",
+                "words": [
+                    {"word": "Suddenly,", "start": 6.0, "end": 7.0, "probability": 0.9},
+                    {"word": "a", "start": 7.1, "end": 7.3, "probability": 0.9},
+                    {"word": "shot", "start": 7.4, "end": 8.0, "probability": 0.9},
+                    {"word": "rang", "start": 8.1, "end": 8.7, "probability": 0.9},
+                    {"word": "out!", "start": 8.8, "end": 10.5, "probability": 0.9},
+                ]
+            }
+        ],
+        "Chapter 2": [ # Add another chapter for variety if needed by other tests
+            {
+                "start": 0.0, "end": 3.0, "text": "The next morning...",
+                "words": [
+                    {"word": "The", "start": 0.0, "end": 0.5, "probability": 0.9},
+                    {"word": "next", "start": 0.6, "end": 1.2, "probability": 0.9},
+                    {"word": "morning...", "start": 1.3, "end": 3.0, "probability": 0.9},
+                ]
+            }
+        ]
+    }
 
 
 @pytest.fixture

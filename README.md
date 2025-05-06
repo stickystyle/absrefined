@@ -4,7 +4,7 @@ ABSRefined is a tool for improving chapter markers in audiobooks hosted on Audio
 
 ## Overview
 
-Many audiobook chapter markers, especially those imported from external sources, aren't precisely aligned with the actual chapter beginnings (often indicated by spoken chapter titles or distinct pauses). This tool aims to fix that.
+Somtimes audiobook chapter markers imported from external sources, aren't precisely aligned with the actual chapter beginnings (often indicated by spoken chapter titles or distinct pauses), this tool aims to fix that. This tool was a weekend project for me to experiment with the hyped Cursor.AI development tool.
 
 ABSRefined offers two interfaces:
 
@@ -186,12 +186,12 @@ Key dependencies are listed in `requirements.txt`. Install using `pip install -r
 
 - `requests`: For API communication.
 - `openai`: For LLM and transcription API access.
-- `tomli`: For parsing TOML configuration files.
+- `tomli`: (Only needed for Python < 3.11) For parsing TOML configuration files.
 - `simpleaudio` (Optional, for GUI playback): For playing `.wav` audio chunks.
 
 External Dependencies:
 
-- `ffmpeg` and `ffprobe`: Required for audio file processing (downloading segments, getting duration). Must be installed separately and available in the system PATH.
+- `ffmpeg` and `ffprobe`: Required for audio file processing (extracting segments, getting duration). Must be installed separately and available in the system PATH.
 
 ## License
 
