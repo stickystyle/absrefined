@@ -1,8 +1,6 @@
 requests
-# mlx-whisper # Removed
-openai # Ensure openai is present
+openai
 pytest
 tqdm
 pathlib
-dotenv # Added for environment variables 
-simpleaudio # Added for audio playback
+simpleaudio

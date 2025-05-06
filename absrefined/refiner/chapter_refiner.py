@@ -1,299 +1,186 @@
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 import logging
-from openai import OpenAI
+from openai import OpenAI, APIError
 
 from absrefined.utils.timestamp import format_timestamp
 
 
 class ChapterRefiner:
-    """Class for refining chapter markers using LLM analysis.
+    """Class for refining chapter markers using LLM analysis via an OpenAI-compatible API."""
 
-    IMPORTANT: This class treats ALL endpoints as OpenAI-compatible API endpoints.
-    It should not have special handling for different providers (like OpenRouter, Anthropic, etc).
-    All endpoints are expected to follow the OpenAI API format, and authentication should
-    be handled the same way regardless of the endpoint domain.
-
-    DO NOT add endpoint-specific logic or conditional handling based on the API URL.
-    """
-
-    def __init__(
-        self,
-        api_base: str,
-        model: str = "gpt-4o",
-        window_size: int = 15,
-        verbose: bool = False,
-        llm_api_key: str = None,
-    ):
+    def __init__(self, config: Dict[str, Any]):
         """
-        Initialize the chapter refiner.
+        Initialize the chapter refiner using a configuration dictionary.
 
         Args:
-            api_base (str): Base URL for the OpenAI-compatible API
-            model (str): Model to use
-            window_size (int): Window size in seconds around chapter markers
-            verbose (bool): Whether to print verbose output
-            llm_api_key (str): API key for the LLM service
+            config (Dict[str, Any]): The main configuration dictionary.
+        
+        Raises:
+            KeyError: If required configuration keys for the LLM API are missing.
         """
-        self.api_base = api_base.rstrip("/")
-        self.model = model
-        self.window_size = window_size
-        self.verbose = verbose
+        self.config = config
         self.logger = logging.getLogger(self.__class__.__name__)
 
-        # Use the API key passed to the constructor
-        self.api_key = llm_api_key
+        refiner_config = self.config.get("refiner", {})
+        self.api_base_url = refiner_config.get("openai_api_url")
+        self.api_key = refiner_config.get("openai_api_key")
+        self.default_model_name = refiner_config.get("model_name", "gpt-4o-mini") 
 
         if not self.api_key:
-            self.logger.warning(f"No API key provided for {self.api_base}")
-            self.logger.warning(
-                "Please provide an API key when initializing ChapterRefiner"
-            )
-        else:
-            self.verify_api_key()
+            self.logger.error("OpenAI API key (openai_api_key) not found in [refiner] config section.")
+            raise KeyError("Missing openai_api_key in refiner configuration")
+        if not self.api_base_url:
+            # Some users might use official OpenAI, where base_url is not strictly needed for the client if it defaults.
+            # However, for consistency and supporting local LLMs, we expect it.
+            # If OpenAI library handles default base_url=None correctly, this check could be softened to a warning.
+            # For now, enforce it as per previous gui.py and config.example.toml structure.
+            self.logger.error("OpenAI API URL (openai_api_url) not found in [refiner] config section.")
+            raise KeyError("Missing openai_api_url in refiner configuration")
 
-        # Initialize the OpenAI client
-        self.client = OpenAI(api_key=self.api_key)
+        try:
+            self.client = OpenAI(api_key=self.api_key, base_url=self.api_base_url)
+            self.logger.info(f"ChapterRefiner initialized. Target API URL: {self.api_base_url}, Default Model: {self.default_model_name}")
+        except Exception as e:
+            self.logger.error(f"Failed to initialize OpenAI client for ChapterRefiner: {e}")
+            raise
+        
+        # self.window_size is removed; context window info (search_window_seconds) is passed to methods.
 
-    def verify_api_key(self):
-        """Verify that the API key is properly set and formatted."""
-        if not self.api_key:
-            self.logger.error("No API key is set - LLM queries will fail")
-            return False
+    # verify_api_key method can be removed or kept if more detailed key validation is needed beyond client init.
+    # For now, successful client initialization is the primary check.
 
-        # Check if the API key looks valid (basic format check)
-        if len(self.api_key) < 8:  # Most API keys are longer than this
-            self.logger.warning(
-                f"WARNING: API key seems too short ({len(self.api_key)} chars) - it may be invalid"
-            )
-            return False
-
-        self.logger.debug(
-            f"API key verification: API key is set (length: {len(self.api_key)})"
-        )
-
-        return True
-
-    def detect_chapter_start(
-        self, transcript: List[Dict], chapter_name: str, orig_timestamp: float
-    ) -> Optional[Dict]:
+    def refine_chapter_start_time(
+        self,
+        transcript_segments: List[Dict], # Segments from the relevant chunk, 0-based timestamps for this chunk
+        chapter_title: str,
+        target_time_seconds: float,    # Original chapter start, relative to the chunk start (0-based)
+        search_window_seconds: float,  # The full duration of the audio chunk/window being analyzed
+        model_name_override: Optional[str] = None
+    ) -> Optional[float]: # Returns refined time offset *within the chunk*, or None
         """
-        Detect the precise start of a chapter in a transcript.
+        Detects the precise start of a chapter within the provided transcript chunk.
 
         Args:
-            transcript (List[Dict]): Transcript segments
-            chapter_name (str): Name of the chapter
-            orig_timestamp (float): Original timestamp for reference
+            transcript_segments (List[Dict]): Transcript segments of the audio chunk.
+                                             Timestamps are relative to the CHUNK start (0).
+            chapter_title (str): Name of the chapter.
+            target_time_seconds (float): Original expected start time of the chapter, relative to chunk start.
+            search_window_seconds (float): Total duration of the provided transcript_segments/audio chunk.
+            model_name_override (str, optional): Specific LLM model name to use, overrides default from config.
 
         Returns:
-            Optional[Dict]: Detected chapter start info with timestamp
+            Optional[float]: Detected chapter start time (offset from chunk start) in seconds, or None.
         """
-        if not transcript:
-            self.logger.debug(
-                f"No transcript segments provided for chapter '{chapter_name}'"
-            )
+        if not transcript_segments:
+            self.logger.warning(f"No transcript segments provided for chapter '{chapter_title}'. Cannot refine.")
             return None
 
-        # Filter transcript segments around the expected timestamp
-        # Use the configured window size around the expected timestamp
-        window_start = max(0, orig_timestamp - self.window_size)
-        window_end = orig_timestamp + self.window_size
+        model_to_use = model_name_override if model_name_override else self.default_model_name
 
-        # Filter segments in the window
-        relevant_segments = [
-            s
-            for s in transcript
-            if (s["start"] >= window_start and s["start"] <= window_end)
-            or (s["end"] >= window_start and s["end"] <= window_end)
-            or (s["start"] <= window_start and s["end"] >= window_end)
-        ]
-
-        if not relevant_segments:
-            self.logger.debug(
-                f"No transcript segments found around timestamp {format_timestamp(orig_timestamp)}"
-            )
-            return None
-
-        # Prepare system prompt
         system_prompt = (
             "You are an expert audio timestamp detector for audiobooks. Your task is to determine the exact moment a new chapter starts, using the provided transcript segments and their detailed word-level timings.\n"
-            "The transcript segments have this structure:\n"
-            "- start: timestamp in seconds when segment begins\n"
-            "- end: timestamp in seconds when segment ends\n"
-            "- text: transcribed text content\n"
-            "- words: array of {word, start, end, probability} objects for precise word-level timing\n\n"
-            "Analyze the transcript, paying close attention to the `words` data, for these chapter transition markers:\n"
-            "1. Explicit announcements: 'Chapter X', the chapter title itself, or section markers like 'Part X', 'Section Y'.\n"
-            "2. Epigraphs: Quoted passages preceding the main chapter content. Often follow a pattern of 'quotation → attribution → narrative start'.\n"
-            "3. Significant pauses: Look for noticeable time gaps between the `end` timestamp of the last word of one section and the `start` timestamp of the first word of the new section.\n"
-            "4. Clear narrative breaks: Identify where the previous narrative concludes and a distinct new section begins, even if not explicitly announced.\n\n"
-            "IMPORTANT: When you identify the start of the chapter (e.g., the word 'Chapter', the first word of the title, the first word of the epigraph, or the first word after a definitive pause), **use the `start` timestamp of that specific word** as the precise chapter start time.\n\n"
-            f"The original timestamp is approximate. The actual chapter start should be within {self.window_size} seconds of this time.\n\n"
-            "**CRITICAL: Your response MUST be ONLY the final timestamp in seconds (e.g., 123.45). Do NOT include ANY other text, explanations, reasoning, labels, or formatting.**"
+            f"The transcript segments cover a window of approximately {search_window_seconds:.0f} seconds. "
+            "All timestamps within the segments and words are relative to the start of this window (0.0s).\n"
+            "Structure of transcript data:\n"
+            "- start: segment start (relative to window start)\n"
+            "- end: segment end (relative to window start)\n"
+            "- text: transcribed text\n"
+            "- words: array of {word, start, end, probability} (timestamps relative to window start)\n\n"
+            "Analyze for chapter transition markers (explicit announcements, epigraphs, significant pauses, narrative breaks).\n"
+            "IMPORTANT: When you identify the start of the chapter (e.g., the word 'Chapter', first word of title/epigraph, or first word after a pause), use the `start` timestamp of **that specific word** as the precise chapter start time within this window.\n"
+            f"The original target timestamp within this window is {target_time_seconds:.2f}s. The actual start should be near this time.\n\n"
+            "**CRITICAL: Your response MUST be ONLY the final timestamp in seconds (e.g., 123.45) relative to the start of this window. Do NOT include ANY other text, explanations, reasoning, labels, or formatting.**"
         )
 
-        # Build user prompt with the transcript and chapter info
         user_prompt = (
-            f"Find the precise timestamp where Chapter '{chapter_name}' starts in this audio transcript.\n\n"
-            f"The original approximate timestamp is {orig_timestamp}.\n\n"
-            f"Here is the transcript of the audio around this timestamp (±{self.window_size} seconds):\n\n"
+            f"Find the precise relative timestamp (within this window) where Chapter '{chapter_title}' starts.\n"
+            f"The original target relative timestamp is {target_time_seconds:.2f}s.\n"
+            f"Transcript window (total duration: {search_window_seconds:.2f}s):\n\n"
         )
-
-        # Add segments with their timestamps AND words for better context
-        for segment in relevant_segments:
+        for segment in transcript_segments: 
             user_prompt += f"[{segment['start']:.2f}s - {segment['end']:.2f}s]: {segment['text']}\n"
-            # Include words if they exist
             if 'words' in segment and segment['words']:
                 user_prompt += "  Words:\n"
                 for word_info in segment['words']:
-                    word_text = word_info.get('word', '?')
-                    word_start = word_info.get('start', -1.0)
-                    word_end = word_info.get('end', -1.0)
-                    user_prompt += f"    - {word_text} [{word_start:.3f}s - {word_end:.3f}s]\n"
-            user_prompt += "\n" # Add a blank line between segments for readability
+                    user_prompt += f"    - {word_info.get('word', '?')} [{word_info.get('start', -1.0):.3f}s - {word_info.get('end', -1.0):.3f}s]\n"
+            user_prompt += "\n" 
 
-        user_prompt += (
-            "\nReturn ONLY the timestamp in seconds where the chapter starts."
-        )
+        user_prompt += "Return ONLY the relative timestamp in seconds."
 
-        # Call the LLM to analyze the transcript
-        response = self.query_llm(system_prompt, user_prompt, max_tokens=50)
-        if not response:
-            self.logger.debug("Failed to get response from LLM")
+        llm_response_content = self.query_llm(system_prompt, user_prompt, model_to_use, max_tokens=20) 
+
+        if not llm_response_content:
+            self.logger.warning(f"LLM query failed or returned empty for chapter '{chapter_title}'.")
             return None
 
-        # Parse the timestamp from the response
-        # First check if the response is already a number
-        if re.match(r"^\d+\.?\d*$", response):
-            timestamp = float(response)
-        else:
-            # Try to extract a number from the response
-            timestamp_match = re.search(r"(\d+\.\d+|\d+)", response)
-            if timestamp_match:
-                timestamp = float(timestamp_match.group(1))
+        try:
+            parsed_timestamp = float(llm_response_content.strip())
+            self.logger.info(f"LLM proposed timestamp for '{chapter_title}': {parsed_timestamp:.3f}s (relative to chunk start). Original target: {target_time_seconds:.3f}s.")
+            
+            # Sanity check: timestamp should be within the chunk boundaries (0 to search_window_seconds)
+            # Add a small tolerance (e.g., 0.5 seconds outside search_window_seconds) for LLM responses that might be slightly off
+            # if the LLM is confused about the exact end. More importantly, it should not be negative.
+            if -0.5 <= parsed_timestamp <= (search_window_seconds + 0.5):
+                # Ensure it's not negative after tolerance (clamp to 0 if slightly negative due to tolerance)
+                return max(0.0, parsed_timestamp) 
             else:
-                self.logger.debug(
-                    f"Failed to extract timestamp from LLM response: {response}"
+                self.logger.warning(
+                    f"LLM proposed timestamp {parsed_timestamp:.3f}s is outside the plausible chunk window [0, {search_window_seconds:.2f}s] for '{chapter_title}'. Discarding."
                 )
+                self.logger.debug(f"Out-of-bounds LLM response for '{chapter_title}': '{llm_response_content}'")
                 return None
-
-        # Create the result with just the timestamp
-        result = {"timestamp": timestamp}
-
-        self.logger.debug(f"Detected chapter start for '{chapter_name}':")
-        self.logger.debug(f"  Original timestamp: {format_timestamp(orig_timestamp)}")
-        self.logger.debug(f"  Detected timestamp: {format_timestamp(timestamp)}")
-
-        return result
+        except ValueError:
+            self.logger.warning(
+                f"Could not parse timestamp from LLM response for '{chapter_title}'. Response: '{llm_response_content}'")
+            return None
 
     def query_llm(
-        self, system_prompt: str, user_prompt: str, max_tokens: int = 50
-    ) -> str:
+        self, system_prompt: str, user_prompt: str, model_name: str, max_tokens: int = 50
+    ) -> Optional[str]:
         """
-        Query the LLM API using OpenAI client.
-
-        Args:
-            system_prompt (str): System prompt
-            user_prompt (str): User prompt
-            max_tokens (int): Maximum tokens to generate
-
-        Returns:
-            str: Generated text
+        Query the LLM API using the initialized OpenAI client.
+        Args: model_name is the specific model to use.
+        Returns: Generated text content from the LLM, or None on failure.
         """
-        # Verify API key before proceeding
-        if not self.verify_api_key():
-            self.logger.error("Skipping LLM query due to missing or invalid API key")
-            return ""
-
         try:
-            self.logger.debug("Sending query to OpenAI API using client")
-            self.logger.debug(f"Model: {self.model}")
+            self.logger.info(f"Sending query to LLM (Model: {model_name}). Max tokens: {max_tokens}.")
+            # self.logger.debug(f"System Prompt: {system_prompt}") # Can be very verbose
+            # self.logger.debug(f"User Prompt (first 500 chars): {user_prompt[:500]}...")
 
-            # Prepare the base parameters that work with all models
-            params = {
-                "model": self.model,
+            chat_completion_params = {
+                "model": model_name,
                 "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
+                "max_tokens": max_tokens,
+                "temperature": 0.1, 
             }
+            
+            # The commented-out logic for o3-mini can be re-added if specific models require it.
+            # For now, assume standard OpenAI-compatible behavior.
 
-            # Check if the model is a reasoning model that doesn't support temperature/max_tokens
-            is_reasoning_model = any(
-                model_name in self.model for model_name in ["o3-mini", "o3"]
-            )
+            response = self.client.chat.completions.create(**chat_completion_params)
+            
+            if response.choices and response.choices[0].message:
+                content = response.choices[0].message.content
+                self.logger.debug(f"LLM Raw Response: '{content}'")
+                return content.strip() if content else None
+            else:
+                self.logger.warning("LLM response missing choices or message content.")
+                return None
 
-            # Only add temperature and max_tokens for models that support them
-            if not is_reasoning_model:
-                params["temperature"] = (
-                    0.1  # Keep temperature low for consistent results
-                )
-                params["max_tokens"] = max_tokens
-
-            response = self.client.chat.completions.create(**params)
-
-            # Extract content from the response
-            content = response.choices[0].message.content
-
-            # Save raw content for debugging
-            raw_content = content
-
-            # Clean up the response - strip any thinking sections and special commands
-            clean_content = content
-
-            # Handle <think> tags that don't have a closing tag
-            if clean_content.startswith("<think>"):
-                # Try to extract any number from the thinking section
-                # This is useful for timestamp extraction when the response is incomplete
-                numbers = re.findall(r"(\d+\.\d+|\d+)", clean_content)
-                if numbers:
-                    # For timestamp extraction, just return the first number found
-                    self.logger.debug(
-                        f"Extracted number from incomplete thinking: {numbers[0]}"
-                    )
-                    return numbers[0]
-                elif "</think>" not in clean_content:
-                    # Just remove the entire think block since it's incomplete
-                    clean_content = ""
-
-            # Remove complete think blocks
-            thinking_pattern = r"<think>.*?</think>"
-            clean_content = re.sub(thinking_pattern, "", clean_content, flags=re.DOTALL)
-
-            # Remove any special commands
-            for cmd in ["/no_think", "/think"]:
-                clean_content = clean_content.replace(cmd, "")
-
-            # Final cleanup - focus on extracting just numbers if that's all we need
-            clean_content = clean_content.strip()
-
-            # If we just need a timestamp, try to extract any number
-            if not clean_content or not re.match(r"^\d+\.?\d*$", clean_content):
-                # Try to extract any number from the entire response
-                numbers = re.findall(r"(\d+\.\d+|\d+)", raw_content)
-                if numbers:
-                    # Prioritize numbers that appear after "Timestamp:" if present
-                    timestamp_numbers = re.findall(
-                        r"Timestamp:\s*(\d+\.?\d*)", raw_content, re.IGNORECASE
-                    )
-                    if timestamp_numbers:
-                        self.logger.debug(
-                            f"Extracted timestamp number from response: {timestamp_numbers[0]}"
-                        )
-                        return f"Timestamp: {timestamp_numbers[0]}"
-                    else:
-                        self.logger.debug(
-                            f"Clean content not numeric, extracted number from raw response: {numbers[0]}"
-                        )
-                        # Return in the expected format to help downstream processing
-                        return f"Timestamp: {numbers[0]}"
-
-            self.logger.debug(f"Received response from LLM: '{clean_content}'")
-            if not clean_content and raw_content:
-                self.logger.debug(f"Raw response before cleaning: '{raw_content}'")
-
-            return clean_content
-
+        except APIError as e: 
+            self.logger.error(f"OpenAI API Error during LLM query (Model: {model_name}, BaseURL: {self.api_base_url}): {e}")
+            if e.status_code == 401:
+                 self.logger.error("Authentication error: Please check your API key.")
+            elif e.status_code == 429:
+                 self.logger.error("Rate limit error: You have exceeded your quota or rate limit.")
+            elif e.status_code == 404:
+                 self.logger.error(f"Model not found error: The model '{model_name}' may not be available at {self.api_base_url}. Check model name and API endpoint.")
+            # Other status codes will just log the generic APIError message.
+            return None
         except Exception as e:
-            self.logger.error(f"Error querying LLM: {e}")
-            return ""
+            self.logger.exception(f"Unexpected error during LLM query (Model: {model_name}): {e}")
+            return None

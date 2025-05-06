@@ -1,0 +1,33 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Configuration Handling: `config.toml`
+
+The application uses a TOML file (`config.toml` by default) for managing configuration settings.
+
+A template file, `config.example.toml`, is provided in the project root. Copy this to `config.toml` and customize it with your specific details.
+
+## Loading Mechanism
+
+Configuration is loaded by the `get_config()` function in [absrefined/config.py](mdc:absrefined/config.py). This module handles finding the file, parsing it using `tomli`, and performing basic validation.
+
+## Key Sections
+
+- **`[audiobookshelf]`**: Contains the `host` URL and `api_key` for your Audiobookshelf instance. Also supports an optional `timeout` for API requests.
+- **`[refiner]`**: Specifies settings for the LLM used in refinement:
+    - `openai_api_url`: The base URL for the OpenAI-compatible API endpoint.
+    - `openai_api_key`: The API key for the LLM service.
+    - `model_name`: The specific LLM model identifier to use (e.g., "gpt-4o-mini").
+    - `whisper_model_name`: (Optional) Specific model for transcription if different from default (e.g., "whisper-1").
+- **`[processing]`**: Settings related to the refinement process itself:
+    - `search_window_seconds`: How many seconds of audio around a chapter mark to analyze.
+    - `download_path`: The directory where temporary audio files (full downloads, chunks) are stored.
+- **`[logging]`**: Controls application logging:
+    - `level`: Sets the logging level (e.g., "INFO", "DEBUG").
+    - `debug_files`: (Optional, boolean) If true, preserves intermediate files like audio chunks and transcripts in the download path for debugging.
+
+## Security
+
+**Do not commit your `config.toml` file containing sensitive API keys to version control.** Ensure it is listed in your `.gitignore` file.

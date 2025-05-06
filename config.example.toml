@@ -1,0 +1,62 @@
+# Example ABSRefined Configuration File
+# Copy this file to config.toml and fill in your details.
+
+[audiobookshelf]
+# URL of your Audiobookshelf instance (including http/https)
+host = "http://your-abs-host:port"
+
+# API Key generated from Audiobookshelf Admin > Settings > API Keys
+api_key = "YOUR_AUDIOBOOKSHELF_API_KEY"
+
+# Optional: Timeout for API requests in seconds (default: 30)
+# timeout = 30
+
+[refiner]
+# Configuration for the LLM Refiner
+
+# --- OpenAI Compatible API --- 
+# Required: URL for the OpenAI compatible API endpoint
+# Example: "https://api.openai.com/v1"
+# Example: "http://localhost:1234/v1" (for LM Studio, Ollama+LiteLLM, etc.)
+openai_api_url = "YOUR_LLM_API_URL"
+
+# Required: API Key for the LLM service (can be dummy key like "nokey" for local models)
+openai_api_key = "YOUR_LLM_API_KEY"
+
+# Optional: Model name to use for refinement (default: gpt-4o-mini)
+# Examples: "gpt-4o-mini", "gpt-4-turbo", "local-model/Llama-3-8B-Instruct-GGUF"
+model_name = "gpt-4o-mini"
+
+
+[transcription]
+# Configuration for Audio Transcription (Currently uses the same OpenAI settings)
+# Future versions might allow separate transcription services.
+
+# Optional: Whisper model size (passed during transcription if using local Whisper)
+# Examples: "tiny", "base", "small", "medium", "large-v2", "large-v3"
+# whisper_model_size = "base"
+
+# Optional: Device for local Whisper ("cpu", "cuda", "mps")
+# whisper_device = "cpu"
+
+# Optional: Compute type for local Whisper (e.g., "int8", "float16", "float32")
+# whisper_compute_type = "int8"
+
+[processing]
+# Configuration for the refinement process
+
+# Search window in seconds (how much audio around a chapter mark to analyze)
+# Default: 30
+search_window_seconds = 30
+
+# Path for temporary audio file downloads
+# Default: "temp_gui" if run via GUI, or system temp if run via CLI
+# Example: "/path/to/your/temp/folder"
+download_path = "absrefined_temp_audio"
+
+
+[logging]
+# Optional: Set the logging level
+# Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+# Default: INFO
+level = "INFO" 

@@ -47,20 +47,49 @@ pip install -e .
 
 ## Configuration
 
-Create a `.env` file in the root directory with your credentials and API details:
+ABSRefined uses a TOML configuration file (`config.toml` by default) for managing all settings.
 
-```dotenv
-# Audiobookshelf Credentials
-ABS_USERNAME=your_audiobookshelf_username
-ABS_PASSWORD=your_audiobookshelf_password
+1. Create your configuration by copying the template:
 
-# OpenAI-Compatible API Details
-OPENAI_API_KEY=your_openai_api_key_or_equivalent
-# Optional: Specify URL if not using standard OpenAI endpoint
-# OPENAI_API_URL=https://api.openai.com/v1
-# Optional: Specify the model to use for refinement (default: gpt-4o-mini)
-# OPENAI_MODEL=gpt-4o-mini
+```bash
+cp config.example.toml config.toml
 ```
+
+2. Edit the `config.toml` file with your specific details:
+
+```toml
+[audiobookshelf]
+# Your Audiobookshelf server URL
+host = "https://your-abs-server.com"
+# Your API key from Audiobookshelf
+api_key = "your_audiobookshelf_api_key"
+# Optional: Request timeout in seconds
+# timeout = 30
+
+[refiner]
+# The base URL for the OpenAI-compatible API endpoint
+openai_api_url = "https://api.openai.com/v1"
+# Your API key for the LLM service
+openai_api_key = "your_openai_api_key"
+# The specific LLM model to use
+model_name = "gpt-4o-mini"
+# Optional: Specific model for transcription if different from default
+# whisper_model_name = "whisper-1"
+
+[processing]
+# How many seconds of audio around a chapter mark to analyze
+search_window_seconds = 15
+# Where temporary audio files are stored
+download_path = "./temp"
+
+[logging]
+# Logging level: "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
+level = "INFO"
+# Optional: Set to true to keep intermediate files for debugging
+# debug_files = false
+```
+
+**Note:** Do not commit your `config.toml` file containing sensitive API keys to version control. Ensure it is listed in your `.gitignore` file.
 
 ## Usage
 
@@ -68,7 +97,7 @@ OPENAI_API_KEY=your_openai_api_key_or_equivalent
 
 This is the recommended way for interactive use and reviewing changes.
 
-1.  Ensure your `.env` file is configured.
+1.  Ensure your `config.toml` file is configured.
 2.  Run the GUI script from the project root:
 
 ```bash
@@ -90,47 +119,48 @@ python gui.py
 
 Suitable for scripting or non-interactive use.
 
-1.  Ensure your `.env` file is configured.
+1.  Ensure your `config.toml` file is configured.
 2.  Run the tool using the installed command or directly via `python -m absrefined.main`:
 
 ```bash
-# Process a book using its URL from AudioBookShelf
-# You will be prompted to confirm changes unless --dry-run is used.
-abs-chapter-refiner --book-url "https://your-abs-server.com/library/item/your-book-id"
+# Process a book using its Item ID or URL
+abs-chapter-refiner "your-book-id-or-url"
 
 # Or run as a module
-python -m absrefined.main --book-url "..."
+python -m absrefined.main "your-book-id-or-url"
 
-# Example: Specify server manually and use verbose output
-abs-chapter-refiner --server "https://your-abs-server.com" --book-url "..." --verbose
+# Example: Specify a different config file
+abs-chapter-refiner --config my-config.toml "your-book-id-or-url"
 
 # Example: Dry run (show proposed changes but don't update server)
-abs-chapter-refiner --book-url "..." --dry-run
+abs-chapter-refiner --dry-run "your-book-id-or-url"
+
+# Example: Auto-confirm and update server (no prompts)
+abs-chapter-refiner --yes "your-book-id-or-url"
 ```
 
 **CLI Options:**
 
-| Option        | Description                                                            |
-|---------------|------------------------------------------------------------------------|
-| `--server`    | AudioBookShelf server URL (required if not in `--book-url`)            |
-| `--book-url`  | URL of the book item page (extracts server and item ID automatically)  |
-| `--llm-api`   | OpenAI-compatible API URL (overrides `OPENAI_API_URL` in `.env`)       |
-| `--model`     | LLM model to use (overrides `OPENAI_MODEL` in `.env`)                |
-| `--window`    | Window size in seconds around each chapter marker (default: 15)        |
-| `--temp-dir`  | Directory for temporary files (default: `temp`)                        |
-| `--dry-run`   | Perform analysis but do not prompt or update the server                |
-| `--verbose`   | `-v`, Enable detailed DEBUG level logging                              |
-| `--debug`     | Enable debug mode (keeps temporary audio chunks and transcripts)       |
-
-*Note: The `--just-download` option was removed as download is integrated into the main workflow.* 
+| Option             | Description                                              |
+|--------------------|----------------------------------------------------------|
+| `item_specifier`   | The Item ID or full Item URL (positional argument)       |
+| `--config`         | Path to the config.toml file (default: `config.toml`)    |
+| `--model`          | Override LLM model from config                           |
+| `--window`         | Override search window size (seconds) from config        |
+| `--download-path`  | Override temporary download path from config             |
+| `--dry-run`        | Perform analysis but do not update the server            |
+| `--yes`, `-y`      | Auto-confirm server updates (no prompts)                 |
+| `--just-download`  | Only download the audio file and exit                    |
+| `--verbose`, `-v`  | Enable INFO logging (overrides config)                   |
+| `--debug`          | Enable DEBUG logging (overrides config)                  |
 
 ## How It Works (Core Logic)
 
-1.  **Initialization**: Reads configuration (`.env`), command-line arguments (for CLI), or GUI inputs.
+1.  **Initialization**: Reads configuration from `config.toml`, command-line arguments (for CLI), or GUI inputs.
 2.  **API Connection**: `AudiobookshelfClient` connects and authenticates to the server.
 3.  **Refinement Process** (`ChapterRefinementTool`):
     *   Fetches original chapter data.
-    *   Downloads the full audio file if needed (cached in `temp_dir`).
+    *   Downloads the full audio file if needed (cached in `download_path`).
     *   For each chapter (except the first):
         *   Extracts a small audio window (`.wav` chunk) around the original marker using `ffmpeg`.
         *   Transcribes the chunk using `AudioTranscriber`.
@@ -156,7 +186,7 @@ Key dependencies are listed in `requirements.txt`. Install using `pip install -r
 
 - `requests`: For API communication.
 - `openai`: For LLM and transcription API access.
-- `python-dotenv`: For environment variable management.
+- `tomli`: For parsing TOML configuration files.
 - `simpleaudio` (Optional, for GUI playback): For playing `.wav` audio chunks.
 
 External Dependencies:

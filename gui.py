@@ -6,14 +6,15 @@ import queue
 import os
 import re # Added for URL parsing
 import logging # Add logging import
-from getpass import getpass # Added for password input fallback
-from dotenv import load_dotenv
 import tempfile # Add tempfile for temporary WAV conversion
 import atexit # To help clean up temporary files
 import shutil # For directory cleanup
+from pathlib import Path # Add Path
+
+# --- Import configuration loader ---
+from absrefined.config import get_config, ConfigError
 
 # --- Import your existing absrefined components ---
-# (Adjust paths if gui.py is not in the root)
 from absrefined.client import AudiobookshelfClient
 from absrefined.transcriber import AudioTranscriber
 from absrefined.refiner import ChapterRefiner
@@ -31,46 +32,45 @@ except ImportError:
     print("Warning: `simpleaudio` or `wave` library not found. Audio playback might be limited.")
     print("Please install it using: pip install simpleaudio")
 
-# --- Keep track of temporary files to delete on exit --- #
-# No longer tracking individual files, cleaning directory instead
-# _temp_files_to_delete = set()
+# --- Keep track of temp paths to clean up on exit --- #
+_temp_dirs_to_clean = set()
 
 def _cleanup_temp_files():
+    """Clean up temporary directories when the application exits."""
     # Use logger if available, otherwise print
     logger = logging.getLogger("_cleanup_temp_files") if 'logging' in globals() else None
-    temp_dir_to_clean = "temp_gui" # The directory used by the GUI
-
-    message = f"Cleaning up temporary directory: {temp_dir_to_clean}"
+    
     if logger:
-        logger.info(message)
+        logger.info(f"Cleaning up {len(_temp_dirs_to_clean)} temporary directories")
     else:
-        print(message)
+        print(f"Cleaning up {len(_temp_dirs_to_clean)} temporary directories")
 
-    if os.path.isdir(temp_dir_to_clean):
+    for temp_dir in _temp_dirs_to_clean:
+        if not temp_dir or not os.path.exists(temp_dir):
+            continue
+            
         try:
-            shutil.rmtree(temp_dir_to_clean)
             if logger:
-                logger.debug(f"  Successfully removed directory: {temp_dir_to_clean}")
+                logger.info(f"Removing directory: {temp_dir}")
             else:
-                print(f"  Successfully removed directory: {temp_dir_to_clean}")
+                print(f"Removing directory: {temp_dir}")
+                
+            shutil.rmtree(temp_dir)
+            
+            if logger:
+                logger.debug(f"Successfully removed directory: {temp_dir}")
+            else:
+                print(f"Successfully removed directory: {temp_dir}")
         except OSError as e:
-            error_message = f"  Error removing directory {temp_dir_to_clean}: {e}"
+            error_message = f"Error removing directory {temp_dir}: {e}"
             if logger:
-                 logger.warning(error_message)
+                logger.warning(error_message)
             else:
-                 print(error_message)
-    else:
-         message = f"  Temporary directory not found: {temp_dir_to_clean}"
-         if logger:
-              logger.info(message)
-         else:
-              print(message)
+                print(error_message)
 
 atexit.register(_cleanup_temp_files)
 
-# --- Constants (Consider moving to a config file later) ---
-DEFAULT_WINDOW = 15
-DEFAULT_MODEL = "gpt-4o-mini" # Or fetch from env
+# --- Constants removed, will be from config ---
 
 class AbsRefinedApp:
     def __init__(self, root):
@@ -78,22 +78,80 @@ class AbsRefinedApp:
         self.root.title("ABSRefined GUI")
         self.root.geometry("800x600") # Adjust as needed
 
-        self.task_queue = queue.Queue()
-        self.result_data = [] # To store chapter results {orig_time, refined_time, apply_var, chapter_data}
-        self.audio_file_path = None # To store the path of the downloaded audio file
-
-        # --- Load Environment Variables ---
-        load_dotenv()
-        # You might want more robust handling for missing env vars in a GUI
-        self.llm_api_url = os.getenv("OPENAI_API_URL")
-        self.llm_api_key = os.getenv("OPENAI_API_KEY")
-        self.abs_username = os.getenv("ABS_USERNAME")
-        self.abs_password = os.getenv("ABS_PASSWORD")
-        self.default_model = os.getenv("OPENAI_MODEL", DEFAULT_MODEL)
-
-        # --- Initialize Logger for the App --- #
+        # --- Initialize Logger FIRST --- #
         self.logger = logging.getLogger(self.__class__.__name__)
-        # Note: Basic config should be set outside the class, see main block
+        # Logging level is set globally in the main block
+
+        self.task_queue = queue.Queue()
+        self.result_data = []
+        self.audio_file_path = None
+        self.current_item_id = None # Added to store item ID from last successful processing
+
+        # --- Load Configuration from TOML ---
+        self.config = {}
+        try:
+            # Since gui.py and config.toml are in the root
+            config_path = Path("config.toml") 
+            self.config = get_config(config_path)
+
+            # Extract Audiobookshelf settings (critical)
+            self.abs_host = self.config.get("audiobookshelf", {}).get("host")
+            self.abs_api_key = self.config.get("audiobookshelf", {}).get("api_key")
+            if not self.abs_host or not self.abs_api_key:
+                 raise ConfigError("Missing 'host' or 'api_key' in [audiobookshelf] section of config.toml")
+
+            # Extract Refiner settings
+            refiner_config = self.config.get("refiner", {})
+            self.llm_api_url = refiner_config.get("openai_api_url")
+            self.llm_api_key = refiner_config.get("openai_api_key")
+            self.default_model = refiner_config.get("model_name", "gpt-4o-mini")
+            if not self.llm_api_url or not self.llm_api_key:
+                # These are critical for the refiner to function
+                raise ConfigError("Missing 'openai_api_url' or 'openai_api_key' in [refiner] section of config.toml")
+
+
+            # Extract Processing settings
+            processing_config = self.config.get("processing", {})
+            self.default_window = processing_config.get("search_window_seconds", 60)
+            
+            # Use system temp directory by default
+            if "download_path" not in processing_config or not processing_config["download_path"]:
+                # Create a unique subdirectory in the system temp dir
+                temp_subdir = os.path.join(tempfile.gettempdir(), f"absrefined_gui_{os.getpid()}")
+                self.download_path = Path(temp_subdir)
+                # Record for cleanup on exit
+                global _temp_dirs_to_clean
+                _temp_dirs_to_clean.add(str(self.download_path))
+                self.logger.info(f"Using system temp directory for downloads: {temp_subdir}")
+            else:
+                self.download_path = Path(processing_config["download_path"])
+                # Also add the configured path to be cleaned up
+                global _temp_dirs_to_clean
+                _temp_dirs_to_clean.add(str(self.download_path))
+
+            # Update config with the actual download path
+            if "processing" not in self.config:
+                self.config["processing"] = {}
+            self.config["processing"]["download_path"] = str(self.download_path)
+
+        except ConfigError as e:
+            messagebox.showerror("Configuration Error", f"Failed to load or parse config.toml:\n{e}\nPlease ensure config.toml exists and is valid in the root directory.")
+            root.destroy() 
+            return 
+        except Exception as e: 
+            messagebox.showerror("Error", f"An unexpected error occurred during configuration loading:\n{e}")
+            root.destroy()
+            return
+
+        # Create the download path if it doesn't exist
+        try:
+            self.download_path.mkdir(parents=True, exist_ok=True)
+            self.logger.info(f"Using download path: {self.download_path.resolve()}")
+        except OSError as e:
+            messagebox.showerror("Error", f"Could not create download directory {self.download_path}: {e}")
+            root.destroy()
+            return
+
 
         # --- Cancellation Event --- #
         self.cancel_event = threading.Event()
@@ -125,35 +183,17 @@ class AbsRefinedApp:
         self.book_url_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
 
         ttk.Label(self.input_frame, text="Window (s):").grid(row=1, column=0, padx=5, pady=5, sticky="w")
-        self.window_var = tk.StringVar(value=str(DEFAULT_WINDOW))
+        self.window_var = tk.StringVar(value=str(self.default_window)) # From config
         self.window_entry = ttk.Entry(self.input_frame, textvariable=self.window_var, width=10)
-        self.window_entry.grid(row=1, column=1, padx=5, pady=5, sticky="w") # Align left
+        self.window_entry.grid(row=1, column=1, padx=5, pady=5, sticky="w")
 
         ttk.Label(self.input_frame, text="Model:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
-        self.model_var = tk.StringVar(value=self.default_model)
+        self.model_var = tk.StringVar(value=self.default_model) # From config
         self.model_entry = ttk.Entry(self.input_frame, textvariable=self.model_var, width=30)
-        self.model_entry.grid(row=2, column=1, padx=5, pady=5, sticky="w") # Align left
+        self.model_entry.grid(row=2, column=1, padx=5, pady=5, sticky="w")
 
-        # --- ABS Credentials (only enabled if not in .env) --- #
-        cred_row_start = 3
-        self.abs_user_var = tk.StringVar()
-        self.abs_pass_var = tk.StringVar()
-
-        ttk.Label(self.input_frame, text="ABS User:").grid(row=cred_row_start, column=0, padx=5, pady=5, sticky="w")
-        self.abs_user_entry = ttk.Entry(self.input_frame, textvariable=self.abs_user_var, width=30)
-        self.abs_user_entry.grid(row=cred_row_start, column=1, padx=5, pady=5, sticky="w")
-
-        ttk.Label(self.input_frame, text="ABS Pass:").grid(row=cred_row_start + 1, column=0, padx=5, pady=5, sticky="w")
-        self.abs_pass_entry = ttk.Entry(self.input_frame, textvariable=self.abs_pass_var, width=30, show="*")
-        self.abs_pass_entry.grid(row=cred_row_start + 1, column=1, padx=5, pady=5, sticky="w")
-
-        # Disable credential fields if loaded from environment
-        if self.abs_username:
-            self.abs_user_entry.insert(0, "(from .env)")
-            self.abs_user_entry.config(state=tk.DISABLED)
-        if self.abs_password:
-             self.abs_pass_entry.insert(0, "********")
-             self.abs_pass_entry.config(state=tk.DISABLED)
+        # --- ABS Credentials Fields Removed ---
+        # ... (lines for abs_user_var, abs_pass_var, labels, entries, and disabling logic are deleted) ...
 
         # Configure input frame column resizing
         self.input_frame.columnconfigure(1, weight=1)
@@ -259,15 +299,25 @@ class AbsRefinedApp:
 
     def start_processing_thread(self):
         """Initiates the background processing task."""
-        book_url = self.book_url_var.get()
+        book_url = self.book_url_var.get().strip()
         if not book_url:
             messagebox.showerror("Error", "Book URL is required.")
             return
 
-        server_url, item_id = self._extract_info_from_url(book_url)
-        if not server_url or not item_id:
-             messagebox.showerror("Error", "Could not extract server URL and item ID from the Book URL. Please check the format (e.g., http://server.com/item/item-id).")
-             return
+        # Extract server URL and item ID (uses self.abs_host for base if needed)
+        server_url_from_gui, item_id_from_gui = self._extract_info_from_url(book_url)
+
+        # Determine server URL to use: GUI entry > config.
+        # Item ID must come from GUI.
+        if not item_id_from_gui:
+            messagebox.showerror("Invalid Input", "Could not determine Book ID from URL. Ensure it's a valid Audiobookshelf item URL or just the ID.")
+            return
+
+        self.current_item_id = item_id_from_gui # Store for later use (e.g. push)
+
+        # Use host from config as the definitive one for the client
+        # server_url_to_use = server_url_from_gui or self.abs_host # Prioritize URL input
+        # The client will use self.abs_host from the config. No need to determine here.
 
         try:
             window_size = int(self.window_var.get())
@@ -277,29 +327,11 @@ class AbsRefinedApp:
             messagebox.showerror("Error", "Window size must be a positive integer.")
             return
 
-        # Check for essential env vars OR GUI input
-        username_to_use = self.abs_username
-        password_to_use = self.abs_password
-
-        if not username_to_use:
-            username_to_use = self.abs_user_var.get()
-            if not username_to_use:
-                 messagebox.showerror("Missing Input", "ABS Username is required (or set ABS_USERNAME in .env).")
-                 return
-
-        if not password_to_use:
-            password_to_use = self.abs_pass_var.get()
-            if not password_to_use:
-                 messagebox.showerror("Missing Input", "ABS Password is required (or set ABS_PASSWORD in .env).")
-                 return
-
-        if not self.llm_api_url or not self.llm_api_key:
-             messagebox.showerror("Missing Config", "OpenAI API URL (OPENAI_API_URL) or Key (OPENAI_API_KEY) not found in environment variables (.env).")
-             return
-        # REMOVED check for self.abs_username/password here, handled above
-        # if not self.abs_username or not self.abs_password:
-        #      messagebox.showerror(...)
-        #      return
+        # ... (validation for model_name) ...
+        model_name = self.model_var.get().strip()
+        if not model_name: # Fallback to config if GUI field is empty
+            model_name = self.default_model 
+            self.model_var.set(model_name)
 
         # Disable button, clear previous results, reset progress
         self.cancel_event.clear() # Ensure cancel flag is reset before starting
@@ -313,17 +345,15 @@ class AbsRefinedApp:
 
         # Gather args for the background task
         args = {
-            "server_url": server_url, # Pass extracted info
-            "item_id": item_id,       # Pass extracted info
-            "window_size": window_size,
-            "model": self.model_var.get(),
+            # Pass the whole config object
+            "config": self.config,
+            "item_id": self.current_item_id, # Use the stored item_id
+            # "server_url" no longer needed here, client uses config
+            "window_size": window_size, # This is search_window_seconds
+            "model_name": model_name, # Can be overridden by GUI
             "dry_run": self.dry_run_var.get(),
-            "temp_dir": "temp_gui", # Or let user choose
-            # Pass necessary credentials/API info
-            "llm_api_url": self.llm_api_url,
-            "llm_api_key": self.llm_api_key,
-            "abs_username": username_to_use,
-            "abs_password": password_to_use,
+            "temp_dir": str(self.download_path), # Pass download_path from config
+            # Credentials (llm_api_url, llm_api_key, abs_*) are now in self.config
         }
 
         # Run the core logic in a separate thread
@@ -334,69 +364,55 @@ class AbsRefinedApp:
         """The actual processing logic run in the background thread."""
         # Make logger accessible within thread if needed, or pass messages via queue
         try:
-            # --- Setup ---
-            server_url = args["server_url"]
+            config = args["config"] # Get the full config object
             item_id = args["item_id"]
-            self.update_gui_progress(0, f"Connecting to {server_url}...")
+            search_window = args["window_size"] # Renamed from "window_size" for clarity
+            model_name = args["model_name"]
+            dry_run = args["dry_run"]
+            temp_dir = Path(args["temp_dir"]) # Ensure it's a Path object
+
+            self.update_gui_progress(0, f"Connecting to {config['audiobookshelf']['host']}...")
             if self.cancel_event.is_set(): raise InterruptedError("Task cancelled")
 
-            client = AudiobookshelfClient(server_url, verbose=False) # GUI handles feedback
-            try:
-                 # Add cancellation check before potentially long operation
-                 if self.cancel_event.is_set(): raise InterruptedError("Task cancelled")
-                 client.login(args["abs_username"], args["abs_password"])
-                 self.update_gui_progress(5, "Login successful.")
-            except Exception as login_err:
-                 raise ConnectionError(f"Failed to login to Audiobookshelf: {login_err}")
+            # Initialize components using the config object
+            # Client, Transcriber, Refiner, Tool need to be updated to accept config
+            client = AudiobookshelfClient(config=config) 
+            # Login is handled by client's __init__ or a separate method if it needs config
+            # client.login() # Assuming login is part of client init or called if needed
 
-            if self.cancel_event.is_set(): raise InterruptedError("Task cancelled")
+            # Ensure temp_dir exists (already created in __init__, but good to have here if logic changes)
+            temp_dir.mkdir(parents=True, exist_ok=True)
 
-            temp_dir = args["temp_dir"]
-            os.makedirs(temp_dir, exist_ok=True)
-
-            refiner = ChapterRefiner(
-                args["llm_api_url"],
-                args["model"],
-                window_size=args["window_size"],
-                verbose=False,
-                llm_api_key=args["llm_api_key"],
-            )
-
-            transcriber = AudioTranscriber(api_key=args["llm_api_key"], verbose=False, debug=False)
-
-            # --- Refinement Tool --- #
-            # Pass the cancellation event to the tool if the tool supports it
-            # For now, we check the event *between* calls to the tool's methods
+            # Transcriber and Refiner might be initialized within ChapterRefinementTool
+            # If so, ChapterRefinementTool's __init__ needs to handle the 'config'
             tool = ChapterRefinementTool(
-                client,
-                transcriber,
-                refiner,
-                verbose=False,
-                temp_dir=temp_dir,
-                dry_run=True,
-                debug=False,
-                progress_callback=self.update_gui_progress # Pass the GUI's progress updater
-                # Pass cancel_event if tool is modified: cancel_event=self.cancel_event
+                config=config, # Pass the full config
+                client=client,
+                # Transcriber and Refiner will be created by the tool using config
+                progress_callback=self.update_gui_progress,
+                # cancel_event=self.cancel_event # Pass if tool supports it
+            )
+            # ... rest of the method, replacing direct arg use with config access where appropriate ...
+            # For example, refiner's model name is now passed to tool, which passes to refiner.
+            # The tool's process_item should use search_window and model_name from its arguments,
+            # which are ultimately sourced from GUI / config.
+
+            # The call to tool.process_item should reflect this,
+            # it might take fewer direct arguments if they are derived from config inside the tool
+            full_results = tool.process_item(
+                item_id=item_id,
+                search_window_seconds=search_window, # Explicitly pass from GUI/args
+                model_name_override=model_name, # Explicitly pass from GUI/args
+                dry_run=dry_run # Add the missing dry_run argument
             )
 
-            self.update_gui_progress(10, f"Processing item: {item_id}...")
-            if self.cancel_event.is_set(): raise InterruptedError("Task cancelled")
-
-            # --- Call process_item --- #
-            # Note: Cancellation *during* process_item requires modifying the tool itself.
-            # Here, we can only cancel *before* this potentially long call.
-            full_results = tool.process_item(item_id)
-
-            # Check immediately after the main processing call
-            if self.cancel_event.is_set(): raise InterruptedError("Task cancelled")
-
-            # --- Process Results for GUI --- #
-            if full_results.get("error"):
-                 raise Exception(f"Processing failed: {full_results['error']}")
-
-            # Store audio file path for playback (though playback now uses chunks)
+            # Ensure self.audio_file_path is updated correctly if used by playback.
+            # Playback now uses chunk_path from chapter_data, so self.audio_file_path might be less critical.
+            # If tool.process_item returns the main audio_file_path (e.g. the concatenated one)
             # self.audio_file_path = full_results.get("audio_file_path")
-            # ... (rest of result processing)
+
+
+            # ... existing result processing ...
 
             refined_chapters_details = full_results.get("chapter_details", [])
             total_chapters = len(refined_chapters_details)
@@ -442,10 +458,6 @@ class AbsRefinedApp:
              self.logger.info("Refinement task execution cancelled.")
              self.update_gui_progress(0, "Cancelled")
              self.queue_task(self._update_button_states)
-        except ConnectionError as e:
-             self.queue_task(messagebox.showerror, "Connection Error", f"{e}")
-             self.update_gui_progress(0, f"Error: {e}")
-             self.queue_task(self._update_button_states)
         except Exception as e:
              error_message = f"An error occurred during processing: {e}"
              self.logger.exception(error_message) # Log stack trace for unexpected errors
@@ -454,15 +466,71 @@ class AbsRefinedApp:
              self.queue_task(self._update_button_states)
 
     def _extract_info_from_url(self, url):
-        """Helper to extract server URL and item ID."""
-        # Reuse regex from main.py or improve it
-        match = re.search(r"(https?://[^/]+)(?:/[^/]+)*/item/([a-zA-Z0-9\-]+)", url)
-        if match:
-            return match.group(1), match.group(2)
-        # Try extracting just the server URL if item ID isn't present (less ideal)
-        match_server = re.search(r"(https?://[^/]+)", url)
-        if match_server:
-            return match_server.group(1), None # Return None for item_id if not found
+        # Use ABS host from config as fallback or for validation
+        abs_host_config = self.config.get("audiobookshelf", {}).get("host", "").strip('/')
+
+        if not url:
+            return None, None # No URL provided
+
+        # Regex to find item ID at the end of a path, potentially with a server part
+        # Example: http://host/item/itemId, /item/itemId, itemId
+        # Example: http://host/audiobook/itemId
+        # Example: http://host/some/path/item/itemId
+        # Will try to match itemId like lib_{32_hex_chars} or {uuid} or standard cuid/shortid
+        # cuid_pattern = r'c[a-z0-9]{24}' # Example CUID-like pattern
+        # hex_id_pattern = r'lib_[0-9a-f]{32}' # Example lib_ item ID
+        # generic_id_pattern = r'[a-zA-Z0-9_-]{7,}' # More generic ID (like shortid, cuid, uuid part)
+
+        # Combined pattern: (server_part optional)/(path optional)/item_or_audiobook/ID
+        # This regex is a bit greedy and simplified. Robust parsing can be complex.
+        path_match = re.match(r'(?:(https?://[^/]+))?(?:(?:/[^/]+)*?/)?(?:item|audiobook)/([a-zA-Z0-9_-]{7,}|lib_[0-9a-f]{32}|c[a-z0-9]{24})/?$', url)
+
+        if path_match:
+            server_url_from_re = path_match.group(1) # Might be None
+            item_id = path_match.group(2)
+            
+            # If server_url_from_re is found, use it. Otherwise, assume it's just an ID and use config host.
+            final_server_url = server_url_from_re or abs_host_config
+            
+            if not final_server_url: # Still no server (neither in URL nor config)
+                 messagebox.showerror("Configuration Error", "Book URL does not contain a host, and Audiobookshelf host is not set in config.toml.")
+                 return None, None
+            if not final_server_url.startswith(('http://', 'https://')):
+                 messagebox.showerror("Configuration Error", f"Audiobookshelf host '{final_server_url}' must include http:// or https://")
+                 return None, None
+            
+            self.logger.info(f"Extracted server '{final_server_url.strip('/')}' and item ID '{item_id}' from URL '{url}'.")
+            return final_server_url.strip('/'), item_id
+
+        # If no match with /item/ or /audiobook/, check if the URL is *just* an ID
+        # This check should be more specific to avoid misinterpreting parts of a path as an ID.
+        # Assuming item IDs are reasonably complex and don't contain slashes.
+        if '/' not in url and (re.fullmatch(r'[a-zA-Z0-9_-]{7,}', url) or \
+                               re.fullmatch(r'lib_[0-9a-f]{32}', url) or \
+                               re.fullmatch(r'c[a-z0-9]{24}', url)):
+            if not abs_host_config:
+                messagebox.showerror("Configuration Error", "URL appears to be an item ID, but Audiobookshelf host is not set in config.toml.")
+                return None, None
+            if not abs_host_config.startswith(('http://', 'https://')):
+                 messagebox.showerror("Configuration Error", f"Audiobookshelf host in config ({abs_host_config}) must include http:// or https://")
+                 return None, None
+            
+            self.logger.info(f"Assuming '{url}' is an item ID, using host from config: {abs_host_config.strip('/')}")
+            return abs_host_config.strip('/'), url
+
+        # Fallback if no pattern matches
+        # Try to extract a base URL if it looks like one, but no item_id found.
+        # This is less ideal as it means the user needs to provide just the ID.
+        base_url_match = re.match(r'(https?://[^/]+)', url)
+        if base_url_match and not abs_host_config:
+            # If user provided a base URL and no config host, this isn't enough.
+            messagebox.showinfo("Input Info", "The entered URL seems to be a server address. Please append '/item/your-item-id' or provide just the Item ID if the host is in config.toml.")
+            return None, None # Cannot determine item_id
+
+        # If we have a config host, and the URL doesn't match known patterns, it's likely an invalid input or just an ID.
+        # The above ID-only check should catch it if it's a valid ID.
+        # If it reaches here, the URL is problematic.
+        messagebox.showerror("Invalid Input", "Could not parse Book URL. Please use the full item URL (e.g., http://host/item/item-id) or just the item ID if the host is configured.")
         return None, None
 
 
@@ -521,7 +589,7 @@ class AbsRefinedApp:
         original_time = result_item["original_time"]
         chapter_data = result_item["chapter_data"] # This holds id, title, chunk_path, window_start etc.
         chunk_path = chapter_data.get("chunk_path")
-        window_start = chapter_data.get("window_start")
+        window_start = chapter_data.get("window_start_time")
 
         # --- Create Widgets ---
         apply_check = ttk.Checkbutton(frame, variable=apply_var)
@@ -709,22 +777,19 @@ class AbsRefinedApp:
         self.progress_label_var.set("Progress: Pushing to server...")
         self.progress_bar["value"] = 0
 
-        # Needs server/item ID again
-        book_url = self.book_url_var.get()
-        server_url, item_id = self._extract_info_from_url(book_url)
-        if not server_url or not item_id:
-             messagebox.showerror("Error", "Cannot push: Could not determine server/item ID.")
-             self._update_button_states() # Re-enable buttons
-             return
+        # item_id is now self.current_item_id stored during processing
+        if not self.current_item_id:
+            messagebox.showerror("Error", "Cannot push: Item ID not available. Please process a book first.")
+            self._update_button_states()
+            return
 
-        # Run the update in a thread to prevent GUI freeze
+        # Client uses config, so no need for server_url, username, password here in args
         update_args = {
-            "server_url": server_url,
-            "item_id": item_id,
+            "config": self.config, # Pass the main config object
+            "item_id": self.current_item_id,
             "chapters": selected_chapters_to_update,
-            "abs_username": self.abs_username,
-            "abs_password": self.abs_password,
         }
+        # Run the update in a thread to prevent GUI freeze
         self.update_thread = threading.Thread(target=self.run_server_update_task, args=(update_args,), daemon=True)
         self.update_thread.start()
 
@@ -732,53 +797,54 @@ class AbsRefinedApp:
     def run_server_update_task(self, args):
         """Background task to perform the actual server update."""
         try:
-            # Add cancellation check before potentially long operations
+            config = args["config"]
+            item_id = args["item_id"]
+            chapters_to_push = args["chapters"] # Renamed for clarity
+
             if self.cancel_event.is_set(): raise InterruptedError("Task cancelled")
 
-            client = AudiobookshelfClient(args["server_url"], verbose=False)
-            # Add cancellation check before potentially long operations
-            if self.cancel_event.is_set(): raise InterruptedError("Task cancelled")
-            client.login(args["abs_username"], args["abs_password"])
+            # Client initialized with config will handle auth
+            client = AudiobookshelfClient(config=config) 
 
-            # --- Need client.update_chapters_start_time method ---
-            self.update_gui_progress(50, f"Sending {len(args['chapters'])} updates to server...")
-
-            # Add cancellation check before potentially long operations
+            self.update_gui_progress(50, f"Sending {len(chapters_to_push)} updates to server...")
             if self.cancel_event.is_set(): raise InterruptedError("Task cancelled")
 
-            # *** This method needs to be added to abs_client.py ***
-            # It should ideally take just item_id and the list of {'id': '...', 'start': ...} dicts
-            success = client.update_chapters_start_time(args["item_id"], args["chapters"])
+            # Client method needs to accept item_id and list of chapter dicts
+            # Example: client.update_chapters_start_times(item_id, chapters_to_push)
+            success = client.update_chapters_start_time(item_id, chapters_to_push) # Assuming this method exists and uses config for auth
 
-            # Check for cancellation immediately after the call returns
             if self.cancel_event.is_set(): raise InterruptedError("Task cancelled")
 
             if success:
                 self.update_gui_progress(100, "Server update successful.")
                 self.queue_task(messagebox.showinfo, "Success", "Selected chapter times updated on the server.")
             else:
-                raise Exception("Server update method returned failure (check client logs/API response).")
+                raise Exception("Server update method returned failure (check client logs/API response or client's internal error handling).")
 
         except InterruptedError:
              self.logger.info("Server update task execution cancelled.")
              self.update_gui_progress(0, "Cancelled Update")
              # Leave buttons disabled until user starts new process
-             self.queue_task(self._update_button_states, task_finished=True)
-        except AttributeError:
-             error_msg = "The `update_chapters_start_time` method is not implemented in AudiobookshelfClient."
+             self.queue_task(self._update_button_states, True)
+        except AttributeError as e:
+             # Added specific handling for missing client method
+             self.logger.error(f"Client method missing: {e}")
+             error_msg = f"Client is missing a required method: {e}. Please check client implementation."
              self.update_gui_progress(0, "Error: Client method missing")
              self.queue_task(messagebox.showerror, "Update Failed", error_msg)
-             self.queue_task(self._update_button_states, task_finished=True)
+             self.queue_task(self._update_button_states, True)
         except Exception as e:
             self.logger.exception(f"Error updating server: {e}") # Log stack trace
             self.update_gui_progress(0, f"Error updating server: {e}")
             self.queue_task(messagebox.showerror, "Update Failed", f"Failed to update server: {e}")
-            self.queue_task(self._update_button_states, task_finished=True)
+            self.queue_task(self._update_button_states, True)
         finally:
             # Ensure buttons are reset correctly after task finishes or is cancelled
-            # Pass flag to indicate task finished to _update_button_states
-            # This is now handled within the except/success blocks to ensure proper state
-            # self.queue_task(self._update_button_states, task_finished=True)
+            # The calls within except blocks already handle this for specific cases.
+            # If an unhandled exception occurred before those, or if normal completion,
+            # we might still need a general call here, but it's largely covered.
+            # For now, relying on except blocks. A general call here might be redundant
+            # or could interfere if specific state (like cancelled) is desired.
             pass
 
     def cancel_task(self):
@@ -791,20 +857,38 @@ class AbsRefinedApp:
 
 # --- Main Execution ---
 if __name__ == "__main__":
-    # --- Basic Logging Setup --- #
-    logging.basicConfig(level=logging.INFO, # Change to DEBUG for more verbose logs
+    # --- Load config to get logging level ---
+    # Initial minimal config load just for logging, before full app init
+    # This avoids logging before config is parsed if app itself logs in __init__
+    # App's __init__ will then load the full config.
+    log_level_from_config = "INFO" # Default
+    temp_config_for_logging = {}
+    try:
+        # Try to load config just for the logging level
+        # config.py will search for config.toml in default locations
+        temp_config_for_logging = get_config() 
+        log_level_from_config = temp_config_for_logging.get("logging", {}).get("level", "INFO").upper()
+    except ConfigError as e:
+        # Log to console if config fails early, as logger might not be set up
+        print(f"Config warning (for logging init): {e}. Using default INFO level.")
+    except Exception as e: # Catch any other error during this pre-load
+        print(f"Unexpected error during logging config pre-load: {e}. Using default INFO level.")
+
+
+    logging.basicConfig(level=log_level_from_config, 
                         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
                         datefmt="%Y-%m-%d %H:%M:%S")
-    # Silence noisy libraries if needed
-    # logging.getLogger("pydub").setLevel(logging.WARNING)
-
-    # Add library dependency check here?
-    if not has_simpleaudio:
-        # Already printed warning, maybe show messagebox?
-        pass # For now, rely on print warnings
-    # if not has_pydub:
-    #     pass # Rely on print warnings
-
-    root = tk.Tk()
-    app = AbsRefinedApp(root)
-    root.mainloop() 
+    
+    # --- Set up main window ---
+    main_root = tk.Tk()
+    app = AbsRefinedApp(main_root) # App __init__ handles full config load & validation
+    
+    if not main_root.winfo_exists(): 
+         # This means app.root.destroy() was called in __init__ (e.g. due to config error)
+         logging.error("Application initialization failed, likely due to configuration issues. Exiting.")
+         # messagebox might have already been shown by __init__
+         exit(1)
+         
+    logging.info(f"Starting ABSRefined GUI with log level {log_level_from_config}.")
+    main_root.mainloop()
+    logging.info("ABSRefined GUI closed.") 

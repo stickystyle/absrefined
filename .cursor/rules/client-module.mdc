@@ -7,10 +7,10 @@ alwaysApply: false
 
 The [abs_client.py](mdc:absrefined/client/abs_client.py) module provides a client for interacting with AudioBookShelf servers. Key capabilities include:
 
-- Authentication with username/password
+- Authentication using API Key (configured via `config.toml`)
 - Retrieving library and item metadata
 - Getting chapter information for audiobooks
 - Downloading audio files
 - Updating chapter markers
 
-The client handles API request formatting, authentication token management, response parsing, and error handling for all AudioBookShelf API interactions.
+The client handles API request formatting, authentication header management, response parsing, and error handling for all AudioBookShelf API interactions, using settings loaded from `config.toml`, see [config-handling.mdc](mdc:.cursor/rules/config-handling.mdc).

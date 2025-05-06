@@ -5,17 +5,18 @@ alwaysApply: false
 ---
 # CLI Usage: Command Line Interface
 
-The [main.py](mdc:absrefined/main.py) file provides a command-line interface for the application with these key options:
+The [main.py](mdc:absrefined/main.py) file provides a command-line interface for the application. 
 
-- `--server`: AudioBookShelf server URL
-- `--book-url`: URL of the book to process (can extract server and item ID automatically)
-- `--llm-api`: OpenAI-compatible API URL
-- `--model`: LLM model to use
-- `--window`: Window size in seconds around each chapter marker
-- `--temp-dir`: Directory for temporary files
-- `--dry-run`: Don't actually update the server
-- `--just-download`: Only download the audio file without processing
-- `--verbose`: Enable verbose output
-- `--debug`: Enable debug mode (save transcripts and audio chunks)
+Key arguments:
+- `item_specifier`: Positional argument for the Item ID or full Item URL.
+- `--config`: Path to the `config.toml` file (default: `config.toml`).
+- `--model`: Override LLM model from config.
+- `--window`: Override search window size (seconds) from config.
+- `--download-path`: Override temporary download path from config.
+- `--dry-run`: Don't actually update the server.
+- `--yes` / `-y`: Auto-confirm server updates.
+- `--just-download`: Only download the audio file and exit.
+- `--verbose` / `-v`: Enable INFO logging (overrides config).
+- `--debug`: Enable DEBUG logging (overrides config).
 
-The application also uses environment variables (via .env file) for credentials and API keys.
+Configuration (API keys, server URL, default model/window/paths, etc.) is primarily managed via the `config.toml` file. See [config-handling.mdc](mdc:.cursor/rules/config-handling.mdc)

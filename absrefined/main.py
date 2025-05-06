@@ -1,321 +1,363 @@
 #!/usr/bin/env python3
 import argparse
+import logging
 import os
 import re
-from getpass import getpass
-from dotenv import load_dotenv
-import logging
 import shutil
+import tempfile
 import atexit
-from absrefined.utils.timestamp import format_timestamp
+from pathlib import Path
 
 from absrefined.client import AudiobookshelfClient
-from absrefined.transcriber import AudioTranscriber
-from absrefined.refiner import ChapterRefiner
+from absrefined.config import ConfigError, get_config
 from absrefined.refinement_tool import ChapterRefinementTool
+from absrefined.utils.timestamp import format_timestamp
 
-# Global variable to hold temp dir path for cleanup
-_main_temp_dir_to_clean = None
-
-def _cleanup_main_temp_dir():
-    global _main_temp_dir_to_clean
-    if _main_temp_dir_to_clean and os.path.isdir(_main_temp_dir_to_clean):
-        logger = logging.getLogger("_cleanup_main_temp_dir")
-        logger.info(f"Cleaning up main temporary directory: {_main_temp_dir_to_clean}")
-        try:
-            shutil.rmtree(_main_temp_dir_to_clean)
-            logger.debug(f"Successfully removed directory: {_main_temp_dir_to_clean}")
-        except OSError as e:
-            logger.warning(f"Error removing directory {_main_temp_dir_to_clean}: {e}")
-    _main_temp_dir_to_clean = None # Reset after attempt
-
-# Register the cleanup function to be called on exit
-atexit.register(_cleanup_main_temp_dir)
+# Set up temp directory cleanup on exit
+def _cleanup_temp_files(path):
+    """Clean up temporary files when the application exits."""
+    if not path or not os.path.exists(path):
+        return
+    
+    logger = logging.getLogger("cleanup")
+    try:
+        logger.info(f"Cleaning up temporary directory: {path}")
+        shutil.rmtree(path)
+        logger.debug(f"Successfully removed directory: {path}")
+    except OSError as e:
+        logger.warning(f"Error removing directory {path}: {e}")
 
 def main():
     """
-    Main entry point for the script.
+    Main entry point for the CLI script.
     """
     parser = argparse.ArgumentParser(
-        description="AudioBookShelf Chapter Marker Refiner"
+        description="Refine chapter markers for an Audiobookshelf item using LLM analysis."
     )
-    parser.add_argument("--server", help="Audiobookshelf server URL")
-    parser.add_argument("--llm-api", help="OpenAI-compatible API URL")
-    parser.add_argument("--model", help="LLM model to use")
+    # --- Input Item --- 
     parser.add_argument(
-        "--verbose", "-v", action="store_true", help="Enable verbose output"
+        "item_specifier",
+        help="The Item ID or the full Audiobookshelf Item URL (e.g., http://host/item/item-id)."
     )
+    # --- Configuration --- 
     parser.add_argument(
-        "--debug", action="store_true", help="Enable debug mode (save transcripts and audio chunks)"
+        "--config",
+        type=Path,
+        default=Path("config.toml"), # Default to config.toml in current dir
+        help="Path to the TOML configuration file (default: config.toml)."
     )
-    parser.add_argument("--temp-dir", help="Directory for temporary files")
+    # --- Overrides --- 
     parser.add_argument(
-        "--dry-run", action="store_true", help="Don't actually update ABS server"
+        "--model",
+        help="Override the LLM model specified in the config file."
     )
-    parser.add_argument(
-        "--just-download",
-        action="store_true",
-        help="Just download the audio file without processing",
-    )
-    parser.add_argument("--book-url", help="URL of the Audiobookshelf book to process")
     parser.add_argument(
         "--window",
         type=int,
-        default=15,
-        help="Window size in seconds around each chapter marker (default: 15)",
+        help="Override the search window size (seconds) specified in the config file."
     )
+    parser.add_argument(
+        "--download-path",
+        type=Path,
+        help="Override the temporary download path specified in the config file."
+    )
+    # --- Operational Controls --- 
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Process chapters but do not push any updates to the Audiobookshelf server."
+    )
+    parser.add_argument(
+        "--yes", "-y",
+        action="store_true",
+        help="Automatically confirm and push updates to the server if not in dry-run mode."
+    )
+    parser.add_argument(
+        "--just-download", # Kept for utility
+        action="store_true",
+        help="Ensure the audio file is downloaded (to the configured/overridden path) and exit."
+    )
+    # --- Logging / Debug --- 
+    parser.add_argument(
+        "--verbose", "-v", 
+        action="store_true", 
+        help="Enable INFO level logging (overrides config file setting)."
+    )
+    parser.add_argument(
+        "--debug", 
+        action="store_true", 
+        help="Enable DEBUG level logging (overrides config file setting). Implies --verbose."
+    )
+    # Note: --debug flag here controls LOG level. File preservation is set in config['logging']['debug_files']
 
     args = parser.parse_args()
 
-    # Set up logging
-    log_level = logging.DEBUG if args.verbose else logging.INFO
-    logging.basicConfig(
-        level=log_level,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-    logger = logging.getLogger(__name__)
-
-    # Initialize env var values
-    load_dotenv()
-    username = os.getenv("ABS_USERNAME")
-    password = os.getenv("ABS_PASSWORD")
-    llm_api_url = args.llm_api or os.getenv("OPENAI_API_URL")
-    llm_api_key = os.getenv("OPENAI_API_KEY", "")
-    llm_model = args.model or os.getenv("OPENAI_MODEL", "gpt-4.1")
-
-    # Extract item_id and server_url from book-url if provided
-    item_id = None
-    server_url = None
-    if args.book_url:
-        # Try to extract server_url and item_id from URL
-        match = re.search(
-            r"(https?://[^/]+)(?:/[^/]+)*/item/([a-zA-Z0-9\\-]+)", args.book_url
-        )
-        if match:
-            server_url = match.group(1)
-            item_id = match.group(2)
-            logger.info(
-                f"Extracted server URL: {server_url} and item ID: {item_id} from URL: {args.book_url}"
-            )
+    # --- Load Configuration --- 
+    config = {}
+    try:
+        config_path = args.config.resolve() # Get absolute path
+        if not config_path.is_file():
+            raise ConfigError(f"Config file not found at specified path: {config_path}")
+        config = get_config(config_path)
+        logging.info(f"Loaded configuration from: {config_path}")
+    except ConfigError as e:
+        logging.error(f"Configuration Error: {e}")
+        # Attempt to provide guidance on creating config.toml
+        example_path = Path(__file__).parent.parent / "config.example.toml"
+        if example_path.exists():
+            logging.error(f"See example configuration at: {example_path}")
+            logging.error("Copy it to config.toml and fill in your details.")
         else:
-            logger.error(
-                f"Failed to extract server URL and item ID from URL: {args.book_url}"
-            )
-            return 1
-    else:
-        # Fallback: use --server argument
-        server_url = args.server
-
-    # Validate required parameters
-    if not server_url:
-        server_url = input("Enter Audiobookshelf server URL: ")
-
-    # Check if credentials are available in env vars
-    if username and password:
-        logger.info("Using credentials from environment variables")
-    else:
-        username = input("Enter username: ")
-        password = getpass("Enter password: ")
-
-    # Initialize clients
-    client = AudiobookshelfClient(server_url, verbose=args.verbose)
-    client.login(username, password)
-
-    # Create temp directory and register for cleanup
-    global _main_temp_dir_to_clean
-    temp_dir = args.temp_dir or "temp"
-    _main_temp_dir_to_clean = os.path.abspath(temp_dir) # Store absolute path
-    os.makedirs(temp_dir, exist_ok=True)
-    logger.info(f"Using temporary directory: {_main_temp_dir_to_clean}")
-
-    # Initialize refiner first (needed by the tool)
-    refiner = ChapterRefiner(
-        llm_api_url,
-        llm_model,
-        window_size=args.window,
-        verbose=args.verbose,
-        llm_api_key=llm_api_key,
-    )
-    logger.debug(
-        f"Initialized LLM refiner with API at {llm_api_url} using model {llm_model}"
-    )
-    logger.debug(
-        f"Using window size of ±{args.window} seconds around each chapter marker"
-    )
-
-    # Initialize transcriber (needed by the tool)
-    # Pass the OpenAI API key, which is the same as the LLM key
-    transcriber = AudioTranscriber(api_key=llm_api_key, verbose=args.verbose, debug=args.debug)
-    logger.debug("Initialized Audio Transcriber using OpenAI API.")
-
-    # Create the refinement tool (needs client, transcriber, refiner)
-    # Instantiate the tool *before* processing, as it now handles download/transcription
-    tool = ChapterRefinementTool(
-        client,
-        transcriber,
-        refiner,
-        verbose=args.verbose,
-        temp_dir=temp_dir,
-        dry_run=args.dry_run,
-        debug=args.debug,
-        # Pass chunk duration if needed, default is in the tool
-        # chunk_duration= # optional override
-    )
-    logger.debug("Initialized Chapter Refinement Tool.")
-
-
-    if not item_id:
-        logger.error("No book/item ID provided or extracted from URL.") # Made error more specific
+            logging.error("Ensure a valid config.toml exists or use --config to specify the path.")
+        return 1 # Exit on config error
+    except Exception as e:
+        logging.error(f"Failed to load configuration: {e}")
         return 1
 
-    # --- Removed Download and Transcription Logic --- #
-    # The ChapterRefinementTool now handles downloading and transcription internally
-    # within its process_item -> process_chapters -> _get_or_create_transcription methods.
+    # --- Apply CLI Overrides to Config (in memory) --- 
+    # This allows components initialized with config to see overrides
+    if args.download_path:
+        # Ensure 'processing' section exists
+        if "processing" not in config: config["processing"] = {}
+        abs_download_path = str(args.download_path.resolve()) # Use absolute path
+        config["processing"]["download_path"] = abs_download_path
+        logging.info(f"Overriding download path with: {abs_download_path}")
+    
+    # If download_path not provided in args or config, use system temp directory
+    if "processing" not in config:
+        config["processing"] = {}
+    if "download_path" not in config["processing"] or not config["processing"]["download_path"]:
+        # Create a unique subdirectory in the system temp dir
+        temp_subdir = os.path.join(tempfile.gettempdir(), f"absrefined_cli_{os.getpid()}")
+        config["processing"]["download_path"] = temp_subdir
+        logging.info(f"Using system temp directory for downloads: {temp_subdir}")
+        # Register cleanup function
+        atexit.register(_cleanup_temp_files, temp_subdir)
+    else:
+        # Register cleanup for configured path
+        atexit.register(_cleanup_temp_files, config["processing"]["download_path"])
+    
+    # Ensure the download directory exists
+    os.makedirs(config["processing"]["download_path"], exist_ok=True)
+        
+    if args.model: # Overrides refiner model
+        if "refiner" not in config: config["refiner"] = {}
+        config["refiner"]["model_name"] = args.model
+        logging.info(f"Overriding refiner model with: {args.model}")
+    if args.window: # Overrides processing window
+        if "processing" not in config: config["processing"] = {}
+        config["processing"]["search_window_seconds"] = args.window
+        logging.info(f"Overriding search window with: {args.window} seconds")
 
-    # Handle --just-download if specified
+    # --- Setup Logging --- 
+    log_level_config = config.get("logging", {}).get("level", "INFO").upper()
+    log_level = logging.INFO # Default
+    if log_level_config == "DEBUG": log_level = logging.DEBUG
+    elif log_level_config == "WARNING": log_level = logging.WARNING
+    elif log_level_config == "ERROR": log_level = logging.ERROR
+    elif log_level_config == "CRITICAL": log_level = logging.CRITICAL
+    
+    # CLI flags override config level
+    if args.debug:
+        log_level = logging.DEBUG
+    elif args.verbose:
+        log_level = logging.INFO
+
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s [%(levelname)-8s] %(name)-25s: %(message)s", # Wider name field
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    # Re-get logger in case basicConfig was called after initial info log
+    logger = logging.getLogger(__name__)
+    logger.info(f"Logging level set to: {logging.getLevelName(log_level)}")
+    if args.debug:
+        logger.debug("Debug logging enabled.")
+        # You could also set config['logging']['debug_files'] = True here if desired,
+        # but it might be cleaner to keep file preservation tied strictly to the config file setting.
+    
+    # --- Extract Item ID and Initialize Client/Tool --- 
+    item_id = None
+    item_specifier = args.item_specifier
+    
+    # Try extracting from URL pattern
+    # Uses a simpler regex assuming /item/ID format or just ID
+    path_match = re.match(r'(?:https?://[^/]+)?(?:(?:/[^/]+)*?/)?item/([a-zA-Z0-9_-]{7,}|lib_[0-9a-f]{32}|c[a-z0-9]{24})/?$', item_specifier)
+    
+    if path_match:
+        item_id = path_match.group(1)
+        logger.info(f"Extracted Item ID '{item_id}' from URL specifier.")
+    elif '/' not in item_specifier and (re.fullmatch(r'[a-zA-Z0-9_-]{7,}', item_specifier) or \
+                                       re.fullmatch(r'lib_[0-9a-f]{32}', item_specifier) or \
+                                       re.fullmatch(r'c[a-z0-9]{24}', item_specifier)):
+        # Assume it's just an ID if no slashes and matches common ID patterns
+        item_id = item_specifier
+        logger.info(f"Using provided Item ID: '{item_id}'")
+    else:
+        logger.error(f"Could not parse Item ID from specifier: '{item_specifier}'")
+        logger.error("Please provide a valid Item ID or the full Item URL.")
+        return 1
+
+    if not item_id:
+        logger.error("Failed to determine Item ID.")
+        return 1
+
+    try:
+        client = AudiobookshelfClient(config=config)
+        tool = ChapterRefinementTool(config=config, client=client)
+        # Progress callback for CLI could be implemented here if needed (e.g., update tqdm bar)
+    except KeyError as e:
+        logger.error(f"Failed to initialize components due to missing configuration: {e}")
+        return 1
+    except Exception as e:
+        logger.error(f"Failed to initialize components: {e}")
+        logger.exception("Initialization error details:")
+        return 1
+
+    # --- Handle --just-download --- 
     if args.just_download:
-        # We need to trigger the download part of the tool's logic.
-        # We can call the transcription method, which handles download first.
-        # It might be slightly wasteful if transcription exists, but ensures download.
-        logger.info(f"Ensuring audio for {item_id} is downloaded (if needed)...")
-        # Call the internal method, providing a dummy path just to trigger download check if needed.
-        # We don't care about the segments here.
-        _, audio_path = tool._get_or_create_transcription(item_id)
+        logger.info(f"Ensuring audio for item {item_id} is downloaded (if needed)...")
+        # Use the tool's internal helper which relies on the client and config
+        audio_path = tool._ensure_full_audio_downloaded(item_id)
         if audio_path and os.path.exists(audio_path):
-             logger.info(f"Audio file is available at: {audio_path}")
-             logger.info("--just-download specified, exiting.")
-             return 0
+            logger.info(f"Audio file is available at: {audio_path}")
+            logger.info("Exiting due to --just-download flag.")
+            return 0
         else:
-             logger.error("Failed to ensure audio file was downloaded.")
-             return 1
-        # --- End --just-download Handling ---
+            logger.error(f"Failed to download or locate audio file for item {item_id}.")
+            return 1
 
+    # --- Determine Parameters for Processing --- 
+    # Use CLI override if provided, otherwise fall back to config value
+    search_window_used = args.window if args.window is not None else config.get("processing", {}).get("search_window_seconds", 60)
+    model_override_used = args.model # This will be None if not provided via CLI
 
-    # --- Process Item using the Tool --- #
     logger.info(f"Starting refinement process for item: {item_id}")
-    result = tool.process_item(item_id)
+    logger.info(f"Using search window: {search_window_used}s")
+    if model_override_used:
+        logger.info(f"Using model override: {model_override_used}")
+    else:
+        logger.info(f"Using model from config: {tool.refiner.default_model_name}") # Access default from initialized refiner
+    logger.info(f"Dry run: {args.dry_run}")
 
-    # --- Process CLI Results --- #
+    # --- Process Item --- 
+    result = tool.process_item(
+        item_id=item_id,
+        search_window_seconds=search_window_used,
+        model_name_override=model_override_used,
+        dry_run=args.dry_run # Pass dry_run status (though tool doesn't update server directly)
+    )
+
+    # --- Process CLI Results --- 
     logger.info("\n--- Refinement Results ---")
-    updated_on_server = False # Flag to track if update occurred
-
     if result.get("error"):
         logger.error(f"Processing failed: {result['error']}")
         return 1
 
     chapter_details = result.get("chapter_details")
-    total_chapters = result.get("total_chapters", 0)
-    # We re-calculate refined count based on significant changes for CLI
-    cli_refined_count = 0
-    significant_change_threshold = 0.5 # seconds (can be different from GUI threshold)
-    changes_to_confirm = []
-    updates_for_server = []
-
     if not chapter_details:
         logger.warning("Processing finished, but no chapter details were returned.")
-    else:
-        logger.info(f"Found {len(chapter_details)} chapters.")
-        logger.info("Comparing original and refined timestamps...")
+        return 0 # Not necessarily an error, maybe no chapters
 
-        for i, detail in enumerate(chapter_details):
-            original_start = detail.get("original_start")
-            refined_start = detail.get("refined_start")
-            chapter_title = detail.get("title", f"Chapter {i+1}")
-            chapter_id = detail.get("id")
+    total_chapters = result.get("total_chapters", len(chapter_details))
+    logger.info(f"Processed {total_chapters} chapters.")
 
-            if original_start is None or refined_start is None:
-                 # Log if refinement didn't produce a time
-                 if refined_start is None and i > 0: # Don't warn for chapter 0 if refinement failed
-                      logger.debug(f"Chapter '{chapter_title}': No refined timestamp available.")
-                 continue # Skip comparison if times aren't available
+    changes_to_confirm = []
+    updates_for_server = []
+    significant_change_threshold = 0.5 # seconds (CLI threshold for reporting/updating)
+    
+    print("\n=== Chapter Comparison ===")
+    print("Idx | Title                           | Original Time | Refined Time  | Diff (s) | Status")
+    print("----|---------------------------------|---------------|---------------|----------|---------")
 
+    cli_refined_count = 0
+    for i, detail in enumerate(chapter_details):
+        original_start = detail.get("original_start")
+        refined_start = detail.get("refined_start")
+        chapter_title = detail.get("title", f"Chapter {i+1}")
+        chapter_id = detail.get("id")
+        
+        # Format for display
+        title_disp = (chapter_title[:29] + '...') if len(chapter_title) > 32 else chapter_title.ljust(32)
+        orig_disp = format_timestamp(original_start) if original_start is not None else "--:--:--.---"
+        ref_disp = format_timestamp(refined_start) if refined_start is not None else "--:--:--.---"
+        diff_disp = "N/A" 
+        status_disp = "No Refinement"
+
+        if original_start is not None and refined_start is not None:
             time_diff = refined_start - original_start
-
-            if args.verbose:
-                 logger.debug(f"Chapter '{chapter_title}' (ID: {chapter_id}):")
-                 logger.debug(f"  Original: {format_timestamp(original_start)}")
-                 logger.debug(f"  Refined:  {format_timestamp(refined_start)}")
-                 logger.debug(f"  Difference: {time_diff:+.3f}s")
-
-            # Check for significant change (and ignore first chapter)
-            if i > 0 and abs(time_diff) > significant_change_threshold:
-                cli_refined_count += 1
-                change_info = {
-                    "index": i,
-                    "title": chapter_title,
-                    "id": chapter_id,
-                    "original": original_start,
-                    "refined": refined_start,
-                    "diff": time_diff,
-                }
-                changes_to_confirm.append(change_info)
-                updates_for_server.append({"id": chapter_id, "start": max(0.0, refined_start)})
-
-        # --- Confirmation and Update --- #
-        if changes_to_confirm:
-            logger.info(
-                f"\nFound {len(changes_to_confirm)} chapters with changes > {significant_change_threshold}s."
-            )
-            logger.info("\nPreview of significant changes:")
-            for change in changes_to_confirm:
-                diff_str = f"({change['diff']:+.3f}s)"
-                logger.info(
-                    f"  Chapter '{change['title']}': {format_timestamp(change['original'])} -> {format_timestamp(change['refined'])} {diff_str}"
-                )
-
-            if not args.dry_run:
-                prompt = "\nDo you want to apply these changes to the server? (y/n): "
-                try:
-                    confirm = input(prompt).strip().lower()
-                except EOFError:
-                    logger.warning(
-                        "Non-interactive environment detected, cancelling update."
-                    )
-                    confirm = "n"
-
-                if confirm == "y":
-                    logger.info("Attempting to update chapters on the server...")
-                    try:
-                        # Use the new client method for partial updates
-                        success = client.update_chapters_start_time(item_id, updates_for_server)
-                        if success:
-                            logger.info("Server update successful.")
-                            updated_on_server = True
-                        else:
-                            logger.error("Server update failed (check client logs).")
-                            # No need to return 1 here, just report failure in summary
-                    except Exception as update_err:
-                         logger.error(f"Error during server update: {update_err}", exc_info=args.verbose)
-                else:
-                    logger.info("Update cancelled by user.")
+            diff_disp = f"{time_diff:+.3f}"
+            # Check for significant change (and ignore first chapter for automatic updates)
+            if abs(time_diff) > significant_change_threshold:
+                 status_disp = "CHANGED"
+                 if i > 0: # Only consider changes after chapter 0 significant for update
+                    cli_refined_count += 1
+                    change_info = {
+                        "index": i,
+                        "title": chapter_title,
+                        "id": chapter_id,
+                        "original": original_start,
+                        "refined": refined_start,
+                        "diff": time_diff,
+                    }
+                    changes_to_confirm.append(change_info)
+                    updates_for_server.append({"id": chapter_id, "start": max(0.0, refined_start)}) # Ensure start time >= 0
             else:
-                 logger.info("\nDRY RUN: Changes detected, but not applying to server.")
+                 status_disp = "No Change"
+        elif refined_start is None and i > 0:
+             status_disp = "Refine Failed"
+        elif i == 0:
+             status_disp = "(First)"
+
+        print(f"{i:<3d} | {title_disp} | {orig_disp:>13} | {ref_disp:>13} | {diff_disp:>8} | {status_disp}")
+
+    logger.info(f"\nFound {cli_refined_count} chapters with significant changes (>{significant_change_threshold}s, excluding first chapter).")
+
+    # --- Update Server (if applicable) --- 
+    if not args.dry_run and updates_for_server:
+        logger.info("\nPreparing to update server...")
+        confirm = args.yes # Auto-confirm if --yes flag is set
+        if not confirm:
+            try:
+                user_input = input(
+                    f"Update {len(updates_for_server)} chapter start times on the server {config['audiobookshelf']['host']}? (yes/N): "
+                ).lower()
+                if user_input == "yes":
+                    confirm = True
+            except EOFError: # Handle non-interactive environments
+                logger.warning("Non-interactive environment detected, cannot confirm. Use --yes to force update or --dry-run to skip.")
+                confirm = False
+        
+        if confirm:
+            logger.info("Proceeding with server update...")
+            try:
+                # Use the initialized client (which uses config for auth)
+                success = client.update_chapters_start_time(item_id, updates_for_server)
+                if success:
+                    logger.info(f"Successfully updated {len(updates_for_server)} chapters on the server.")
+                else:
+                    logger.error("Server update failed. Check client logs or server API response.")
+                    return 1 # Indicate failure
+            except Exception as e:
+                logger.error(f"Error occurred during server update: {e}")
+                logger.exception("Update error details:")
+                return 1
         else:
-             logger.info("\nNo significant changes found requiring server update.")
-
-    # --- Final Summary --- #
-    logger.info("\n--- Final Summary ---")
-    logger.info(f"Item ID: {item_id}")
-    logger.info(f"Total chapters found: {total_chapters}")
-    logger.info(f"Chapters with significant changes detected: {cli_refined_count}")
-
-    update_status = "N/A (No significant changes)"
-    if cli_refined_count > 0:
-         if args.dry_run:
-             update_status = "Dry Run (No changes applied)"
-         elif updated_on_server:
-             update_status = "Yes (Applied)"
-         else:
-             update_status = "No (Confirmation declined or failed)"
-    logger.info(f"Server updated: {update_status}")
-
-    # Cleanup is handled by atexit
-
-    return 0 # Return 0 unless a critical error occurred earlier
-
+            logger.info("Server update cancelled by user or non-interactive environment.")
+    elif args.dry_run:
+        logger.info("\nDry run enabled. No changes were pushed to the server.")
+    elif not updates_for_server:
+        logger.info("\nNo significant chapter changes found to update on the server.")
+    
+    logger.info("Refinement process complete.")
+    return 0 # Indicate success
 
 if __name__ == "__main__":
-    # Consider adding try/except around main() call for very top-level errors
-    exit_code = main()
-    exit(exit_code)
+    # Set up minimal logging first to catch early errors like config loading
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    try:
+        exit_code = main()
+        exit(exit_code)
+    except Exception as e:
+        logging.exception(f"An unexpected error occurred in main execution: {e}")
+        exit(1)
