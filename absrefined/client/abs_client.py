@@ -463,3 +463,92 @@ class AudiobookshelfClient:
 
         # If we couldn't refine, return the original chapter
         return chapter
+
+    def update_chapters_start_time(self, item_id: str, chapter_updates: List[Dict]) -> bool:
+        """
+        Updates the start times for specific chapters of a library item.
+
+        This method fetches the current chapters, applies the provided start time
+        updates, and then pushes the entire modified chapter list back to the server.
+
+        Args:
+            item_id (str): ID of the library item.
+            chapter_updates (List[Dict]): A list of dictionaries, where each dictionary
+                                          contains 'id' (chapter ID) and 'start' (new start time in seconds).
+                                          Example: [{'id': 'ch1', 'start': 15.5}, {'id': 'ch3', 'start': 120.2}]
+
+        Returns:
+            bool: True if the update was successful, False otherwise.
+        """
+        if not self.token:
+            self.logger.error("Authentication token not available. Please login first.")
+            return False
+
+        if not chapter_updates:
+            self.logger.info("No chapter updates provided. Skipping update.")
+            return True # Nothing to do, consider it success
+
+        self.logger.info(f"Fetching current chapters for item {item_id} to apply updates.")
+        try:
+            current_chapters = self.get_item_chapters(item_id)
+            if not current_chapters:
+                # Handle case where item exists but has no chapters (or details failed)
+                self.logger.warning(f"Could not retrieve current chapters for item {item_id}. Cannot apply updates.")
+                # Check if details failed vs no chapters
+                details = self.get_item_details(item_id) # Fetch details again to be sure
+                if not details:
+                     self.logger.error(f"Failed to get item details for {item_id}. Update aborted.")
+                     return False
+                elif not details.get("media", {}).get("chapters"):
+                     self.logger.info(f"Item {item_id} currently has no chapters. Update not applicable.")
+                     return True # No chapters to update
+                else:
+                     # Should not happen if get_item_chapters uses get_item_details correctly
+                     self.logger.error(f"Inconsistent state: get_item_chapters returned empty, but details show chapters for {item_id}.")
+                     return False
+
+
+            # Create a map for easy lookup {chapter_id: chapter_dict}
+            chapters_map = {chap["id"]: chap for chap in current_chapters}
+
+            updated_count = 0
+            for update in chapter_updates:
+                chapter_id = update.get("id")
+                new_start_time = update.get("start")
+
+                if chapter_id is None or new_start_time is None:
+                    self.logger.warning(f"Skipping invalid chapter update entry: {update}")
+                    continue
+
+                if chapter_id in chapters_map:
+                    # Ensure start time is float and non-negative
+                    try:
+                        new_start_float = max(0.0, float(new_start_time))
+                        if chapters_map[chapter_id]["start"] != new_start_float:
+                             self.logger.debug(f"Updating chapter {chapter_id}: start {chapters_map[chapter_id]['start']} -> {new_start_float}")
+                             chapters_map[chapter_id]["start"] = new_start_float
+                             updated_count += 1
+                        else:
+                             self.logger.debug(f"Skipping chapter {chapter_id}: start time {new_start_float} is unchanged.")
+                    except (ValueError, TypeError) as e:
+                         self.logger.warning(f"Skipping chapter {chapter_id} due to invalid start time '{new_start_time}': {e}")
+                else:
+                    self.logger.warning(
+                        f"Chapter ID '{chapter_id}' from update list not found in current chapters for item {item_id}."
+                    )
+
+            if updated_count == 0:
+                 self.logger.info("No actual changes to chapter start times after applying updates. Skipping server call.")
+                 return True
+
+            # The list of chapters is now modified within the chapters_map values
+            # Convert map values back to a list for the update
+            updated_chapter_list = list(chapters_map.values())
+
+            self.logger.info(f"Pushing {updated_count} updated chapter start times for item {item_id}...")
+            # Call the existing method that handles the API PUT request
+            return self.update_item_chapters(item_id, updated_chapter_list)
+
+        except Exception as e:
+            self.logger.error(f"An unexpected error occurred during chapter update process: {e}", exc_info=True)
+            return False

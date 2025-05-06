@@ -28,6 +28,7 @@ class ChapterRefinementTool:
         temp_dir: str = "temp",
         dry_run: bool = False,
         debug: bool = False,
+        progress_callback=None,
     ):
         """
         Initialize the chapter refinement tool.
@@ -40,6 +41,8 @@ class ChapterRefinementTool:
             temp_dir (str): Directory for temporary files
             dry_run (bool): Whether to run in dry-run mode (no updates)
             debug (bool): Whether to preserve audio chunks and transcripts for debugging
+            progress_callback (callable, optional): Function to call with progress updates (percent, message).
+                                                    Defaults to None.
         """
         self.abs_client = abs_client
         self.transcriber = transcriber
@@ -48,6 +51,7 @@ class ChapterRefinementTool:
         self.temp_dir = temp_dir
         self.dry_run = dry_run
         self.debug = debug
+        self.progress_callback = progress_callback
         self.logger = logging.getLogger(self.__class__.__name__)
 
         # Ensure temp directory exists
@@ -116,20 +120,40 @@ class ChapterRefinementTool:
     def process_item(self, item_id: str) -> Dict:
         """
         Process an item to refine its chapter markers using small window extraction.
+        Modified for GUI: Returns detailed chapter info and uses progress callback.
 
         Args:
             item_id (str): ID of the item to process
 
         Returns:
-            Dict: Result of processing
+            Dict: Result dictionary with keys:
+                  'error': str | None,
+                  'item_id': str,
+                  'total_chapters': int,
+                  'refined_chapters': int, # Count of chapters with potential changes
+                  'audio_file_path': str | None,
+                  'chapter_details': List[Dict] | None # List of {'id', 'title', 'original_start', 'refined_start'}
         """
+        # Initialize the result structure expected by the GUI
         result = {
             "item_id": item_id,
             "total_chapters": 0,
             "refined_chapters": 0,
-            "updated_on_server": False,
+            "audio_file_path": None,
+            "chapter_details": None,
             "error": None,
         }
+
+        # Helper function for progress updates
+        def _update_progress(percent: int, message: str):
+            if self.progress_callback:
+                try:
+                    self.progress_callback(percent, message)
+                except Exception as cb_err:
+                    self.logger.warning(f"Progress callback failed: {cb_err}")
+            self.logger.info(f"Progress: {percent}% - {message}")
+
+        _update_progress(0, "Starting process...")
 
         if not item_id:
             self.logger.error("No item ID provided for processing.")
@@ -137,7 +161,8 @@ class ChapterRefinementTool:
             return result
 
         try:
-            # Get original chapters from the server
+            # --- Get Original Chapters --- #
+            _update_progress(5, "Fetching chapter information...")
             original_chapters = self.abs_client.get_item_chapters(item_id)
 
             if not original_chapters:
@@ -145,6 +170,7 @@ class ChapterRefinementTool:
                     f"No chapters found for item {item_id}. Nothing to process."
                 )
                 result["error"] = "No chapters found on server."
+                _update_progress(100, "Failed: No chapters found.")
                 return result
 
             result["total_chapters"] = len(original_chapters)
@@ -152,275 +178,78 @@ class ChapterRefinementTool:
                 f"Found {len(original_chapters)} original chapters for item {item_id}."
             )
 
-            # Ensure full audio is downloaded before processing chapters
+            # --- Ensure Audio Downloaded --- #
+            _update_progress(10, "Checking/Downloading audio file...")
             full_audio_path = self._ensure_full_audio_downloaded(item_id)
             if not full_audio_path:
                 result["error"] = "Failed to download full audio file."
+                _update_progress(100, "Failed: Audio download error.")
                 return result
+            result["audio_file_path"] = full_audio_path
+            _update_progress(15, "Audio file ready.")
 
-            # Get the actual audio duration once
+            # --- Get Audio Duration --- #
+            _update_progress(17, "Getting audio duration...")
             audio_duration = self._get_audio_duration(full_audio_path)
             if audio_duration is None:
                 self.logger.warning(
                     f"Could not determine audio duration for {full_audio_path}. Proceeding without duration check."
                 )
-                # Continue processing, but end times might be less accurate
+            _update_progress(20, "Starting chapter processing...")
 
-            # Process the chapters to refine them
-            refined_chapters = self.process_chapters(
+            # --- Process Chapters --- #
+            # This method now needs to accept the callback and pass it down/use it internally
+            processed_chapters_list = self.process_chapters(
                 item_id, original_chapters, full_audio_path, audio_duration
             )
 
-            if (
-                refined_chapters is None
-            ):  # Check for None indicating critical error during chapter processing
+            # process_chapters should return None only on critical failure
+            if processed_chapters_list is None:
                 self.logger.error("Chapter processing failed critically.")
                 result["error"] = "Chapter processing failed (check logs for details)."
+                _update_progress(100, "Failed: Chapter processing error.")
                 return result
-            elif not refined_chapters:  # Check for empty list
-                self.logger.warning(
-                    "No refined chapters were generated (potentially no changes needed or errors occurred)."
-                )
-                # Continue to comparison, which handles this
-            else:
-                self.logger.info(
-                    f"Generated {len(refined_chapters)} potential refined chapters."
-                )
 
-            # Compare original and refined chapters
-            updated, refined_count = self.compare_and_update(
-                item_id, original_chapters, refined_chapters, self.dry_run
-            )
-            result["refined_chapters"] = refined_count
-            result["updated_on_server"] = updated
+            # --- Finalize Results for GUI --- #
+            _update_progress(95, "Finalizing results...")
+            final_chapter_details = []
+            refined_count = 0
+            significant_change_threshold = 0.1 # Lower threshold for GUI display
+
+            # Iterate through the results from process_chapters
+            for processed_chapter in processed_chapters_list:
+                 # Extract times for comparison
+                 original_start = processed_chapter.get("original_start")
+                 refined_start = processed_chapter.get("refined_start")
+
+                 # Count as refined if time exists and differs significantly
+                 if (
+                     original_start is not None
+                     and refined_start is not None
+                     and abs(refined_start - original_start) > significant_change_threshold
+                 ):
+                      refined_count += 1
+
+                 # Append the *entire* dictionary (including chunk_path, window_start etc.)
+                 # to the list that will be sent to the GUI.
+                 final_chapter_details.append(processed_chapter)
+
+            result["chapter_details"] = final_chapter_details
+            result["refined_chapters"] = refined_count # Store the count of potentially changed chapters
+            _update_progress(100, "Processing complete.")
 
         except EnvironmentError as e:  # Catch ffmpeg/ffprobe check failure
             self.logger.error(f"Environment error: {e}")
             result["error"] = str(e)
+            _update_progress(100, f"Failed: {e}")
         except Exception as e:
             self.logger.exception(
                 f"An unexpected error occurred during processing item {item_id}: {e}"
             )
             result["error"] = f"Unexpected error: {e}"
+            _update_progress(100, "Failed: Unexpected error.")
 
         return result
-
-    def compare_and_update(
-        self,
-        item_id: str,
-        original_chapters: List[Dict],
-        refined_chapters: List[Dict],
-        dry_run: bool = False,
-    ) -> tuple[bool, int]:  # Return tuple: (updated_on_server, refined_count)
-        """
-        Compare original and refined chapters, ask for confirmation, and update if changes were made.
-        (Largely unchanged from previous version, ensures float handling is robust)
-
-        Args:
-            item_id (str): ID of the library item
-            original_chapters (List[Dict]): Original chapters
-            refined_chapters (List[Dict]): Refined chapters (may contain 'refined' key and float starts)
-            dry_run (bool): Whether to perform a dry run (no actual updates)
-
-        Returns:
-            tuple[bool, int]: (Whether update was successful/attempted, count of refined chapters)
-        """
-        changed_chapters_info = []
-        significant_change_threshold = 0.5  # seconds
-        refined_count = 0
-
-        # Ensure we have comparable lists
-        if (
-            not original_chapters
-            or not refined_chapters
-            or len(original_chapters) != len(refined_chapters)
-        ):
-            self.logger.warning(
-                "Chapter lists are missing or mismatched in length. Cannot compare."
-            )
-            # Return 0 refined count if lists mismatch
-            return False, 0
-
-        self.logger.info(
-            f"\nComparing {len(original_chapters)} original and refined chapter timestamps..."
-        )
-
-        final_chapters_for_update = []
-
-        for i, (orig, refined) in enumerate(zip(original_chapters, refined_chapters)):
-            final_chapter = refined.copy()
-
-            try:
-                orig_time = parse_timestamp(orig.get("start", 0))
-            except ValueError:
-                self.logger.warning(
-                    f"Could not parse original start time '{orig.get('start')}' for chapter index {i}. Using 0.0."
-                )
-                orig_time = 0.0
-
-            # Refined time should be float from process_chapters
-            refined_start_val = refined.get("start", 0)
-            if isinstance(refined_start_val, (float, int)):
-                refined_time = float(refined_start_val)
-            elif isinstance(
-                refined_start_val, str
-            ):  # Handle potential string format if passed directly
-                try:
-                    refined_time = parse_timestamp(refined_start_val)
-                except ValueError:
-                    self.logger.warning(
-                        f"Could not parse refined start time string '{refined_start_val}' for chapter index {i}. Using original time {orig_time:.3f}s."
-                    )
-                    refined_time = orig_time
-            else:
-                self.logger.warning(
-                    f"Unexpected type for refined start time '{refined_start_val}' (type: {type(refined_start_val)}). Using original time {orig_time:.3f}s."
-                )
-                refined_time = orig_time
-
-            chapter_title = orig.get("title", f"Chapter {i + 1}")
-
-            # Always ensure the first chapter starts at 0
-            if i == 0:
-                refined_time = 0.0
-                final_chapter["start"] = 0.0  # Update the final dict as well
-
-            is_refined = refined.get("refined", False)
-            if is_refined:
-                refined_count += 1
-
-            time_diff = refined_time - orig_time
-
-            if self.verbose:
-                self.logger.debug(f"Chapter '{chapter_title}' (Index {i}):")
-                self.logger.debug(f"  Original: {format_timestamp(orig_time)}")
-                self.logger.debug(
-                    f"  Refined:  {format_timestamp(refined_time)} ({'Marked as refined' if is_refined else 'Kept original'})"
-                )
-                self.logger.debug(f"  Difference: {time_diff:+.3f}s")
-
-            if abs(time_diff) > significant_change_threshold:
-                self.logger.info(
-                    f"  Significant change detected for Chapter '{chapter_title}' (Diff: {time_diff:+.3f}s)"
-                )
-                changed_chapters_info.append(
-                    {
-                        "index": i,
-                        "title": chapter_title,
-                        "original": orig_time,
-                        "refined": refined_time,
-                        "diff": time_diff,
-                    }
-                )
-
-            # Remove the internal 'refined' flag before potential update
-            if "refined" in final_chapter:
-                del final_chapter["refined"]
-            # Keep start time as float until boundaries are fixed, then format
-            final_chapter["start"] = refined_time  # Keep as float for now
-            final_chapters_for_update.append(final_chapter)
-
-        # Update chapters on the server if changes were made
-        if changed_chapters_info:
-            self.logger.info(
-                f"\nFound {len(changed_chapters_info)} chapters with changes > {significant_change_threshold}s."
-            )
-            self.logger.info("\nPreview of significant changes:")
-            for change in changed_chapters_info:
-                diff_str = f"({change['diff']:+.3f}s)"
-                self.logger.info(
-                    f"  Chapter '{change['title']}': {format_timestamp(change['original'])} -> {format_timestamp(change['refined'])} {diff_str}"
-                )
-
-            # Fix chapter end times based on the *next* chapter's *refined* start time (which are floats)
-            self._fix_chapter_boundaries(final_chapters_for_update)
-            self.logger.debug(
-                "Applied end time adjustments based on refined start times."
-            )
-
-            # NOW format the start times to strings for display/update
-            for chapter in final_chapters_for_update:
-                if isinstance(chapter["start"], (float, int)):
-                    chapter["start"] = format_timestamp(chapter["start"])
-                # API expects end times as floats/ints, not strings
-                # if "end" in chapter and isinstance(chapter["end"], str):
-                #      chapter["end"] = parse_timestamp(chapter["end"])
-
-            if not dry_run:
-                prompt = "\nDo you want to apply these changes to the server? (y/n): "
-                try:
-                    confirm = input(prompt).strip().lower()
-                except EOFError:
-                    self.logger.warning(
-                        "Non-interactive environment detected, cancelling update."
-                    )
-                    confirm = "n"
-
-                if confirm == "y":
-                    self.logger.info("Attempting to update chapters on the server...")
-                    # Ensure end times are numbers if they exist, API client expects numbers
-                    for chapter in final_chapters_for_update:
-                        if "end" in chapter and not isinstance(
-                            chapter["end"], (int, float)
-                        ):
-                            try:
-                                chapter["end"] = parse_timestamp(chapter["end"])
-                            except ValueError:
-                                self.logger.error(
-                                    f"Could not parse end time {chapter['end']} before update, setting to None."
-                                )
-                                chapter["end"] = None  # Or handle differently?
-
-                    success = self.abs_client.update_item_chapters(
-                        item_id, final_chapters_for_update
-                    )
-                    if success:
-                        self.logger.info("Server update successful.")
-                        return True, refined_count
-                    else:
-                        self.logger.error("Server update failed.")
-                        return False, refined_count
-                else:
-                    self.logger.info("Update cancelled by user.")
-                    return False, refined_count
-            else:
-                self.logger.info(
-                    "\nDRY RUN: Changes detected, but not updating server."
-                )
-                return True, refined_count  # Indicate update would have happened
-        else:
-            self.logger.info("\nNo significant changes found requiring server update.")
-            return False, refined_count  # No update attempted
-
-    def _fix_chapter_boundaries(self, chapters: List[Dict]) -> None:
-        """
-        Fix chapter boundaries by setting each chapter's end time to the start time
-        of the next chapter. Assumes start times are floats.
-
-        Args:
-            chapters (List[Dict]): Chapters to fix boundaries for. Modified in-place.
-        """
-        if not chapters or len(chapters) < 2:
-            return
-
-        # Start times should already be floats from process_chapters
-        for i in range(len(chapters) - 1):
-            next_start = chapters[i + 1]["start"]
-            if isinstance(next_start, (float, int)):
-                chapters[i]["end"] = float(next_start)
-            else:
-                # Handle error: next start wasn't a number as expected
-                self.logger.error(
-                    f"Cannot fix end time for chapter {i}: next chapter start '{next_start}' is not a number."
-                )
-                # Decide on fallback: remove end time? Keep original? For now, remove.
-                if "end" in chapters[i]:
-                    del chapters[i]["end"]
-
-        # Handle last chapter end time? ABS might handle this if missing.
-        if "end" not in chapters[-1]:
-            self.logger.warning("Last chapter missing 'end' time after boundary fix.")
-            # Optionally set based on duration if available, otherwise leave unset
 
     def _get_audio_duration(self, audio_path: str) -> float | None:
         """Get the duration of an audio file using ffprobe."""
@@ -476,6 +305,8 @@ class ChapterRefinementTool:
     ) -> List[Dict] | None:
         """
         Process chapters using small window extraction and transcription.
+        Modified for GUI: Returns detailed results including original and refined start times (as floats).
+                      Uses progress callback for updates.
 
         Args:
             item_id (str): ID of the item to process.
@@ -484,86 +315,126 @@ class ChapterRefinementTool:
             audio_duration (float | None): Total duration of the audio, if known.
 
         Returns:
-            List[Dict] | None: Refined chapters list with float start times, or None on critical failure.
+            List[Dict] | None: A list of chapter detail dictionaries, each containing:
+                              {'id': str, 'title': str, 'original_start': float, 'refined_start': float | None}
+                              Returns None on critical failure.
         """
-        updated_chapters = []
+        chapter_details_list = []
         window_half_size = self.refiner.window_size  # Get window size from refiner
+        total_chapters = len(original_chapters)
+        base_progress = 20 # Start progress reporting after initial steps
+        progress_range = 95 - base_progress # Progress percentage allocated to this loop
+
         self.logger.info(
-            f"Processing chapters using ±{window_half_size}s window extraction..."
+            f"Processing {total_chapters} chapters using ±{window_half_size}s window extraction..."
         )
 
-        # Use tqdm for progress indication
-        chapter_progress = tqdm(
-            original_chapters,
-            desc="Processing Chapters",
-            unit="chapter",
-            disable=not self.verbose,
-        )
+        # Helper for progress within this method
+        def _update_chapter_progress(index: int, message: str):
+            if self.progress_callback:
+                percent = base_progress + int(((index + 1) / total_chapters) * progress_range)
+                try:
+                    self.progress_callback(percent, f"Ch.{index + 1}/{total_chapters}: {message}")
+                except Exception as cb_err:
+                    self.logger.warning(f"Progress callback failed: {cb_err}")
+
+
+        # Use tqdm for console progress if verbose, but rely on callback for GUI
+        # chapter_progress = tqdm(..., disable=not self.verbose)
 
         # Get base name and extension for temp files
-        audio_base, audio_ext = os.path.splitext(os.path.basename(full_audio_path))
+        # audio_base, audio_ext = os.path.splitext(os.path.basename(full_audio_path))
 
-        for i, chapter in enumerate(chapter_progress):
+        for i, chapter in enumerate(original_chapters):
             temp_chunk_path = None  # Ensure cleanup path is defined
+            _update_chapter_progress(i, "Starting...")
             try:
                 chapter_title = chapter.get("title", f"Chapter {i + 1}")
-                try:
-                    chapter_time = parse_timestamp(chapter.get("start", 0))
-                except ValueError:
-                    self.logger.warning(
-                        f"Could not parse timestamp '{chapter.get('start')}' for chapter '{chapter_title}'. Skipping refinement for this chapter."
-                    )
-                    refined_chapter = chapter.copy()
-                    refined_chapter["start"] = (
-                        0.0 if i == 0 else parse_timestamp(chapter.get("start", 0))
-                    )  # Keep original as float
-                    refined_chapter["refined"] = False
-                    updated_chapters.append(refined_chapter)
-                    continue  # Move to next chapter
-
-                if self.verbose:
-                    chapter_progress.set_description(f"Processing '{chapter_title}'")
-                self.logger.debug(
-                    f"Processing chapter {i + 1}/{len(original_chapters)}: '{chapter_title}' (Original time: {format_timestamp(chapter_time)})"
-                )
-
-                # Define window boundaries
-                window_start = max(0.0, chapter_time - window_half_size)
-                window_end = chapter_time + window_half_size
-                # Clamp window_end to audio duration if known
-                if audio_duration is not None:
-                    window_end = min(window_end, audio_duration)
-                # Ensure window_start is strictly less than window_end
-                if window_start >= window_end:
-                    self.logger.warning(
-                        f"Calculated window for '{chapter_title}' is invalid (start >= end). Skipping segment extraction."
-                    )
-                    # Decide how to handle - keep original? Assume refinement failed?
-                    refined_chapter = chapter.copy()
-                    refined_chapter["start"] = chapter_time  # Keep original as float
-                    refined_chapter["refined"] = False
-                    updated_chapters.append(refined_chapter)
+                chapter_id = chapter.get("id")
+                if not chapter_id:
+                    self.logger.error(f"Chapter {i+1} ('{chapter_title}') missing ID. Cannot process.")
+                    # How to handle? Skip? Create dummy result?
+                    # Let's create a dummy result indicating failure for this chapter
+                    chapter_details_list.append({
+                        "id": f"missing_id_{i}",
+                        "title": chapter_title,
+                        "original_start": parse_timestamp(chapter.get("start", 0)), # Best effort parse
+                        "refined_start": None
+                    })
                     continue
 
+                try:
+                    original_start_time = parse_timestamp(chapter.get("start", 0))
+                except ValueError:
+                    self.logger.warning(
+                        f"Could not parse timestamp '{chapter.get('start')}' for chapter '{chapter_title}'. Using 0.0 for original time."
+                    )
+                    original_start_time = 0.0
+
+                # Initialize result for this chapter
+                current_chapter_detail = {
+                    "id": chapter_id,
+                    "title": chapter_title,
+                    "original_start": original_start_time,
+                    "refined_start": None, # Default to None
+                    "chunk_path": None, # Will be populated after extraction
+                    "window_start": None, # Will be populated after calculation
+                }
+
+                # Skip refinement for the very first chapter (always 0)
+                if i == 0:
+                     self.logger.info("Skipping refinement for first chapter (start time is always 0.0).")
+                     # Ensure original_start is 0.0 for the first chapter detail
+                     current_chapter_detail["original_start"] = 0.0
+                     chapter_details_list.append(current_chapter_detail)
+                     continue
+
+                self.logger.debug(
+                    f"Processing chapter {i + 1}/{total_chapters}: '{chapter_title}' (Original time: {format_timestamp(original_start_time)})"
+                )
+
+                # --- Define Window --- #
+                window_start = max(0.0, original_start_time - window_half_size)
+                window_end = original_start_time + window_half_size
+                if audio_duration is not None:
+                    window_end = min(window_end, audio_duration)
+
+                # Store window_start for playback reference
+                current_chapter_detail["window_start"] = window_start
+
+                if window_start >= window_end:
+                    self.logger.warning(
+                        f"Calculated window for '{chapter_title}' is invalid ({window_start:.3f}s >= {window_end:.3f}s). Skipping refinement."
+                    )
+                    chapter_details_list.append(current_chapter_detail)
+                    continue
+
+                # --- Extract Audio Segment --- #
+                _update_chapter_progress(i, f"Extracting audio {window_start:.1f}s-{window_end:.1f}s...")
                 self.logger.debug(
                     f"  Extracting audio window: {window_start:.3f}s - {window_end:.3f}s"
                 )
 
-                # --- Extract Audio Segment using ffmpeg --- #
-                # Create a proper filename for the chunk if in debug mode
-                if self.debug:
-                    # Clean chapter title for filename
+                if self.debug: # In debug mode, create predictable filenames
                     safe_title = re.sub(r'[^\w\-_]', '_', chapter_title)
                     chunk_filename = f"{item_id}_chapter_{i+1}_{safe_title}_{window_start:.1f}s-{window_end:.1f}s.wav"
                     temp_chunk_path = os.path.join(self.temp_dir, chunk_filename)
+                    # No need to add predictable names to cleanup, handled by directory cleanup
                     self.logger.info(f"Debug mode: Saving audio chunk to {temp_chunk_path}")
                 else:
-                    # Create a temporary file for the chunk securely
+                    # Use tempfile for non-debug to guarantee uniqueness, but don't delete automatically
                     with tempfile.NamedTemporaryFile(
-                        suffix=".wav", dir=self.temp_dir, delete=False
+                        prefix=f"{item_id}_ch{i+1}_", suffix=".wav", dir=self.temp_dir, delete=False
                     ) as temp_f:
                         temp_chunk_path = temp_f.name
+                        # Do NOT add temp_chunk_path to _temp_files_to_delete here, GUI cleans dir
 
+                # Store chunk path for playback
+                current_chapter_detail["chunk_path"] = temp_chunk_path
+
+                # Use WAV for transcription compatibility with some engines
+                # Also helps simpleaudio playback in GUI if we use the same chunk
+                # Consider adding `-ac 1` (mono) and `-ar 16000` (sample rate) if needed by transcriber/refiner
                 ffmpeg_cmd = [
                     "ffmpeg",
                     "-i",
@@ -572,9 +443,9 @@ class ChapterRefinementTool:
                     str(window_start),
                     "-to",
                     str(window_end),
-                    "-vn",  # No video
-                    # "-c:a", "pcm_s16le", # Explicitly output WAV
-                    "-y",  # Overwrite temporary file if needed
+                    "-vn",
+                    "-acodec", "pcm_s16le", # Output WAV format
+                    "-y",
                     temp_chunk_path,
                 ]
                 self.logger.debug(f"  Running ffmpeg: {' '.join(ffmpeg_cmd)}")
@@ -590,8 +461,9 @@ class ChapterRefinementTool:
                         encoding="utf-8",
                         errors="replace",
                     )
+                    # Only log stderr if verbose or error indication
                     if result.stderr and (
-                        self.verbose or "error" in result.stderr.lower()
+                        self.verbose or "error" in result.stderr.lower() or "warning" in result.stderr.lower()
                     ):
                         self.logger.debug(f"  ffmpeg stderr:\n{result.stderr.strip()}")
                 except subprocess.CalledProcessError as e:
@@ -599,35 +471,27 @@ class ChapterRefinementTool:
                         f"  Error extracting audio segment for chapter '{chapter_title}': {e}"
                     )
                     self.logger.error(f"  Command: {' '.join(e.cmd)}")
-                    self.logger.error(
-                        f"  ffmpeg stderr: {e.stderr.strip() if e.stderr else '[No stderr]'}"
-                    )
-                    # Keep original chapter if extraction fails
-                    refined_chapter = chapter.copy()
-                    refined_chapter["start"] = chapter_time  # Keep original as float
-                    refined_chapter["refined"] = False
-                    updated_chapters.append(refined_chapter)
-                    continue  # Proceed to next chapter
-                except Exception as e:  # Catch other potential ffmpeg errors
+                    self.logger.error(f"  ffmpeg stderr: {e.stderr.strip() if e.stderr else '[No stderr]'}")
+                    chapter_details_list.append(current_chapter_detail) # Keep original
+                    continue
+                except Exception as e:
                     self.logger.exception(
                         f"  Unexpected error during ffmpeg extraction for '{chapter_title}': {e}"
                     )
-                    refined_chapter = chapter.copy()
-                    refined_chapter["start"] = chapter_time  # Keep original as float
-                    refined_chapter["refined"] = False
-                    updated_chapters.append(refined_chapter)
+                    chapter_details_list.append(current_chapter_detail) # Keep original
                     continue
 
-                # --- Transcribe the Small Audio Segment --- #
+                # --- Transcribe Segment --- #
+                _update_chapter_progress(i, "Transcribing audio segment...")
                 self.logger.debug(f"  Transcribing segment: {temp_chunk_path}")
+                chunk_segments = []
                 try:
-                    # Transcribe the extracted chunk. Timestamps will be relative to the chunk's start (window_start).
-                    # No output file needed.
+                    # Timestamps will be relative to the chunk's start (window_start).
                     chunk_segments = self.transcriber.transcribe_audio(
                         temp_chunk_path, write_to_file=False
                     )
 
-                    # IMPORTANT: Adjust segment timestamps to be relative to the *original* audio file
+                    # Adjust segment timestamps to be relative to the *original* audio file
                     for seg in chunk_segments:
                         seg["start"] += window_start
                         seg["end"] += window_start
@@ -640,11 +504,13 @@ class ChapterRefinementTool:
                         self.logger.debug(
                             f"  Transcription successful, found {len(chunk_segments)} segments."
                         )
-                        first_seg_time = chunk_segments[0]["start"]
-                        last_seg_time = chunk_segments[-1]["end"]
-                        self.logger.debug(
-                            f"    Adjusted time range: {first_seg_time:.3f}s - {last_seg_time:.3f}s"
-                        )
+                        # Log adjusted time range for debugging
+                        if self.verbose:
+                            first_seg_time = chunk_segments[0]["start"]
+                            last_seg_time = chunk_segments[-1]["end"]
+                            self.logger.debug(
+                                f"    Adjusted time range: {first_seg_time:.3f}s - {last_seg_time:.3f}s"
+                            )
                     else:
                         self.logger.warning(
                             f"  Transcription of segment for '{chapter_title}' yielded no segments."
@@ -654,78 +520,69 @@ class ChapterRefinementTool:
                     self.logger.error(
                         f"  Error transcribing segment for chapter '{chapter_title}': {e}"
                     )
-                    chunk_segments = []  # Treat as failed transcription
+                    # chunk_segments remains empty
 
-                # --- Refine using the Segment's Transcription --- #
-                refined_chapter = chapter.copy()  # Start with original chapter info
-                refined_chapter["start"] = chapter_time  # Ensure start is float
-                refined_chapter["refined"] = False  # Default to not refined
-
-                if chunk_segments:  # Only attempt refinement if transcription succeeded
+                # --- Refine using Transcription --- #
+                if chunk_segments:
+                    _update_chapter_progress(i, "Refining timestamp with LLM...")
                     self.logger.debug(
                         "  Detecting chapter start within transcribed segment..."
                     )
                     detection_result = self.refiner.detect_chapter_start(
-                        chunk_segments,
+                        chunk_segments, # Pass the small, adjusted transcript
                         chapter_title,
-                        chapter_time,  # Pass the small, adjusted transcript
+                        original_start_time,
                     )
                     if detection_result:
                         new_timestamp = detection_result.get("timestamp")
                         try:
                             new_timestamp_float = max(0.0, float(new_timestamp))
                             # Basic sanity check: ensure refined time is within or very close to the extracted window
+                            # Allow slightly more leeway than the window half-size
                             if not (
-                                window_start - 1.0
+                                window_start - (window_half_size * 0.5)
                                 <= new_timestamp_float
-                                <= window_end + 1.0
+                                <= window_end + (window_half_size * 0.5)
                             ):
                                 self.logger.warning(
-                                    f"  Refined timestamp {new_timestamp_float:.3f}s is outside the expected window ({window_start:.3f}s - {window_end:.3f}s) for '{chapter_title}'. Keeping original."
+                                    f"  Refined timestamp {new_timestamp_float:.3f}s is significantly outside the expected window ({window_start:.3f}s - {window_end:.3f}s) for '{chapter_title}'. Keeping original."
                                 )
-                                new_timestamp_float = (
-                                    chapter_time  # Revert to original if way off
-                                )
+                                # Keep original (refined_start is still None)
                             else:
                                 self.logger.info(
-                                    f"  Refined timestamp for '{chapter_title}': {format_timestamp(new_timestamp_float)} (Original: {format_timestamp(chapter_time)})"
+                                    f"  Refined timestamp for '{chapter_title}': {format_timestamp(new_timestamp_float)} (Original: {format_timestamp(original_start_time)})"
                                 )
-                                refined_chapter["start"] = new_timestamp_float
-                                refined_chapter["refined"] = True
+                                current_chapter_detail["refined_start"] = new_timestamp_float
+
                         except (ValueError, TypeError):
                             self.logger.warning(
                                 f"  Invalid refined timestamp '{new_timestamp}' received. Keeping original."
                             )
-                            # Keep chapter_time (already set in refined_chapter)
                     else:
                         self.logger.info(
                             f"  LLM refinement failed for '{chapter_title}'. Keeping original timestamp."
                         )
                 else:
-                    self.logger.warning(
+                     _update_chapter_progress(i, "Skipping refinement (transcription failed).")
+                     self.logger.warning(
                         f"  Skipping LLM refinement for '{chapter_title}' due to transcription failure/empty result."
-                    )
+                     )
 
-                updated_chapters.append(refined_chapter)
+                chapter_details_list.append(current_chapter_detail)
+                _update_chapter_progress(i, "Done.")
 
             finally:
-                # --- Clean up temporary audio chunk only if not in debug mode --- #
-                if temp_chunk_path and os.path.exists(temp_chunk_path) and not self.debug:
-                    try:
-                        os.remove(temp_chunk_path)
-                        self.logger.debug(
-                            f"  Cleaned up temporary file: {temp_chunk_path}"
-                        )
-                    except OSError as e:
-                        self.logger.error(
-                            f"  Failed to clean up temp file {temp_chunk_path}: {e}"
-                        )
-                elif self.debug and temp_chunk_path and os.path.exists(temp_chunk_path):
-                    self.logger.debug(f"  Keeping audio chunk for debugging: {temp_chunk_path}")
-
-        # Close progress bar
-        if isinstance(chapter_progress, tqdm):
-            chapter_progress.close()
+                # --- Clean up temporary audio chunk --- #
+                # REMOVED: Cleanup is handled by GUI atexit handler cleaning the temp dir
+                # if temp_chunk_path and os.path.exists(temp_chunk_path) and not self.debug:
+                #     try:
+                #         os.remove(temp_chunk_path)
+                #         self.logger.debug(f"  Cleaned up temp chunk: {temp_chunk_path}")
+                #     except OSError as e:
+                #         self.logger.warning(
+                #             f"  Could not remove temporary chunk file {temp_chunk_path}: {e}"
+                #         )
+                pass # Keep the finally block structure just in case
 
         self.logger.info("Finished processing all chapters.")
-        return updated_chapters
+        return chapter_details_list

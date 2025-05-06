@@ -5,3 +5,4 @@ pytest
 tqdm
 pathlib
 dotenv # Added for environment variables 
+simpleaudio # Added for audio playback
