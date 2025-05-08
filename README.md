@@ -95,6 +95,9 @@ level = "INFO"
 
 ### Graphical User Interface (GUI)
 
+![ABSRefined GUI](gui.png)
+
+
 This is the recommended way for interactive use and reviewing changes.
 
 1.  Ensure your `config.toml` file is configured.
@@ -141,6 +144,44 @@ abs-chapter-refiner --yes "your-book-id-or-url"
 
 **CLI Options:**
 
+```
+--- Refinement Results ---
+INFO: Processed 14 chapters.
+
+=== Chapter Comparison ===
+Idx | Title                           | Original Time | Refined Time  | Diff (s) | Status
+----|---------------------------------|---------------|---------------|----------|---------
+1   | 1. The Greatest Story Ever Told  |  00:02:23.753 |  00:02:23.533 |   -0.220 | No Change
+2   | 2. On Earth as in the Heavens    |  00:21:24.796 |  00:21:24.456 |   -0.340 | No Change
+3   | 3. Let There Be Light            |  00:36:40.048 |  00:36:40.288 |   +0.240 | No Change
+4   | 4. Between the Galaxies          |  00:51:15.251 |  00:51:15.751 |   +0.500 | No Change
+5   | 5. Dark Matter                   |   01:06:1.552 |   01:06:1.232 |   -0.320 | No Change
+6   | 6. Dark Energy                   |  01:27:22.141 |  01:27:22.281 |   +0.140 | No Change
+7   | 7. The Cosmos on the Table       |  01:50:59.348 |  01:50:59.568 |   +0.220 | No Change
+8   | 8. On Being Round                |  02:12:44.913 |  02:12:45.093 |   +0.180 | No Change
+9   | 9. Invisible Light               |   02:28:5.352 |   02:28:5.112 |   -0.240 | No Change
+10  | 10. Between the Planets          |  02:48:38.889 |  02:48:39.189 |   +0.300 | No Change
+11  | 11. Exoplanet Earth              |   03:04:3.461 |   03:04:3.761 |   +0.300 | No Change
+12  | 12. Reflections on the Cosmic... |  03:21:39.957 |  03:21:40.117 |   +0.160 | No Change
+13  | End Credits                      |  03:39:55.484 |  03:39:55.704 |   +0.220 | No Change
+INFO: 
+Found 0 chapters with significant changes (>0.5s, excluding first chapter).
+INFO: 
+No significant chapter changes found to update on the server.
+INFO: 
+--- Usage & Cost Estimates ---
+INFO: Refinement (LLM):
+INFO:   Prompt Tokens:     17337
+INFO:   Completion Tokens: 56
+INFO:   Total Tokens:      17393
+INFO:   Estimated Cost:    $0.0026
+INFO: Transcription (Audio):
+INFO:   Total Duration:    405.00s (6.75 min)
+INFO:   Estimated Cost:    $0.0405
+INFO: Refinement process complete.
+INFO: Cleaning up temporary directory: absrefined_temp_audio
+```
+
 | Option             | Description                                              |
 |--------------------|----------------------------------------------------------|
 | `item_specifier`   | The Item ID or full Item URL (positional argument)       |
@@ -182,8 +223,6 @@ abs-chapter-refiner --yes "your-book-id-or-url"
 
 ## Dependencies
 
-Key dependencies are listed in `requirements.txt`. Install using `pip install -r requirements.txt` or `uv pip install -r requirements.txt`.
-
 - `requests`: For API communication.
 - `openai`: For LLM and transcription API access.
 - `tomli`: (Only needed for Python < 3.11) For parsing TOML configuration files.
@@ -193,6 +232,3 @@ External Dependencies:
 
 - `ffmpeg` and `ffprobe`: Required for audio file processing (extracting segments, getting duration). Must be installed separately and available in the system PATH.
 
-## License
-
-This project is licensed under the terms of the license included in the repository. 
