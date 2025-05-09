@@ -172,16 +172,16 @@ class TestChapterRefinementTool:
         original_chapter_data = abs_item_response["media"]["chapters"]
         significant_change_threshold = 0.1  # From process_item
 
-        # Chapter 0: No refinement (refined_start is same as original_start or None)
+        # Chapter 0: Always start at 0 without actual refinement
         chap0_data = original_chapter_data[0].copy()
         chap0_orig_start_float = float(chap0_data["start"])
         processed_chapters_output.append(
             {
                 **chap0_data,
                 "original_start": chap0_orig_start_float,
-                "refined_start": chap0_orig_start_float,  # Same as original, so not counted as refined by process_item
-                "usage_data": None,
-                "chunk_duration_seconds": 0,  # Add other expected keys for loop in process_item
+                "refined_start": 0.0,  # Updated to always be 0.0
+                "usage_data": None,  # No usage data since we skip processing
+                "chunk_duration_seconds": 0,
             }
         )
 
@@ -752,15 +752,14 @@ class TestChapterRefinementTool:
         assert result is not None
         assert len(result) == len(original_chapters)
 
-        # Verify extract_audio_segment was called for each chapter
-        assert tool._extract_audio_segment.call_count == len(original_chapters)
-
-        # Verify transcriber was called for each chapter
-        assert mock_transcriber.transcribe_audio.call_count == len(original_chapters)
-
-        # Verify refiner was called for each chapter
-        assert mock_refiner.refine_chapter_start_time.call_count == len(
-            original_chapters
+        # First chapter (index 0) should not have called extract_audio_segment or transcriber
+        # Subsequent chapters should still have these methods called
+        expected_extraction_calls = len(original_chapters) - 1  # Skip first chapter
+        assert tool._extract_audio_segment.call_count == expected_extraction_calls
+        assert mock_transcriber.transcribe_audio.call_count == expected_extraction_calls
+        assert (
+            mock_refiner.refine_chapter_start_time.call_count
+            == expected_extraction_calls
         )
 
         # Check the results for each chapter
@@ -769,19 +768,30 @@ class TestChapterRefinementTool:
             chapter_title = original_chapter.get("title", f"Chapter {i + 1}")
             original_start = float(original_chapter["start"])
 
-            # Calculate expected window start
-            window_start = max(0.0, original_start - search_window_seconds / 2)
+            if i == 0:
+                # First chapter should always have refined_start = 0.0
+                assert chapter_result["id"] == original_chapter["id"]
+                assert chapter_result["title"] == chapter_title
+                assert chapter_result["original_start"] == original_start
+                assert chapter_result["refined_start"] == 0.0
+                assert chapter_result["usage_data"] is None
+                assert chapter_result["chunk_path"] is None
+            else:
+                # Calculate expected window start
+                window_start = max(0.0, original_start - search_window_seconds / 2)
 
-            # Calculate expected refined start time
-            # window_start + refinement_offset
-            expected_offset, _ = refinement_offsets[chapter_title]
-            expected_refined_start = window_start + expected_offset
+                # Calculate expected refined start time
+                # window_start + refinement_offset
+                expected_offset, _ = refinement_offsets[chapter_title]
+                expected_refined_start = window_start + expected_offset
 
-            assert chapter_result["id"] == original_chapter["id"]
-            assert chapter_result["title"] == chapter_title
-            assert chapter_result["original_start"] == original_start
-            assert abs(chapter_result["refined_start"] - expected_refined_start) < 0.01
-            assert chapter_result["usage_data"] == usage_data
+                assert chapter_result["id"] == original_chapter["id"]
+                assert chapter_result["title"] == chapter_title
+                assert chapter_result["original_start"] == original_start
+                assert (
+                    abs(chapter_result["refined_start"] - expected_refined_start) < 0.01
+                )
+                assert chapter_result["usage_data"] == usage_data
 
     @patch("shutil.which", return_value="ffmpeg_path")
     @patch("tempfile.NamedTemporaryFile")
@@ -878,20 +888,24 @@ class TestChapterRefinementTool:
         assert result is not None
         assert len(result) == len(original_chapters)
 
-        # Verify all functions were called the expected number of times
-        assert tool._extract_audio_segment.call_count == len(original_chapters)
-        assert mock_transcriber.transcribe_audio.call_count == len(original_chapters)
-        assert mock_refiner.refine_chapter_start_time.call_count == len(
-            original_chapters
-        )
+        # Verify functions were called the expected number of times (skip first chapter)
+        expected_calls = len(original_chapters) - 1  # Skip first chapter
+        assert tool._extract_audio_segment.call_count == expected_calls
+        assert mock_transcriber.transcribe_audio.call_count == expected_calls
+        assert mock_refiner.refine_chapter_start_time.call_count == expected_calls
 
-        # Check the results - all chapters should have refined_start set to None
-        for i, chapter_result in enumerate(result):
-            assert chapter_result["id"] == original_chapters[i]["id"]
-            assert chapter_result["title"] == original_chapters[i]["title"]
-            assert chapter_result["original_start"] == float(
-                original_chapters[i]["start"]
-            )
+        # Check the results for specific chapters
+        # First chapter should have refined_start = 0.0 without processing
+        first_chapter = result[0]
+        assert first_chapter["id"] == original_chapters[0]["id"]
+        assert first_chapter["refined_start"] == 0.0
+        assert first_chapter["usage_data"] is None  # No usage for first chapter
+
+        # Other chapters should have tried refinement but failed (refined_start is None)
+        for i in range(1, len(result)):
+            chapter_result = result[i]
+            original_chapter = original_chapters[i]
+            assert chapter_result["id"] == original_chapter["id"]
             assert (
                 chapter_result["refined_start"] is None
             )  # No refinement because LLM returned None
@@ -1004,15 +1018,29 @@ class TestChapterRefinementTool:
         assert result is not None
         assert len(result) == len(original_chapters)
 
-        # Verify correct handling of chapters with missing start times
-        # First chapter should have its normal start time
-        assert result[0]["original_start"] == 0.0
-        assert result[0]["refined_start"] is not None
+        # Check that we only processed chapters after the first one
+        assert tool._extract_audio_segment.call_count == len(original_chapters) - 1
+        assert (
+            mock_transcriber.transcribe_audio.call_count == len(original_chapters) - 1
+        )
+        assert (
+            mock_refiner.refine_chapter_start_time.call_count
+            == len(original_chapters) - 1
+        )
 
-        # Second chapter should have a default of 0.0 for missing start time
-        assert result[1]["original_start"] == 0.0
-        assert result[1]["refined_start"] is not None
+        # First chapter should have refined_start = 0.0 without processing
+        assert result[0]["id"] == original_chapters[0]["id"]
+        assert result[0]["original_start"] == 0.0
+        assert result[0]["refined_start"] == 0.0
+        assert result[0]["usage_data"] is None
+        assert result[0]["chunk_path"] is None
+
+        # Second chapter should have original_start defaulted to 0.0 (due to missing) but with refinement
+        assert result[1]["id"] == original_chapters[1]["id"]
+        assert result[1]["original_start"] == 0.0  # Default when missing
+        assert result[1]["refined_start"] is not None  # Should have been refined
 
         # Third chapter should also have a default of 0.0 for explicit None start time
-        assert result[2]["original_start"] == 0.0
-        assert result[2]["refined_start"] is not None
+        assert result[2]["id"] == original_chapters[2]["id"]
+        assert result[2]["original_start"] == 0.0  # Default for explicit None
+        assert result[2]["refined_start"] is not None  # Should have been refined

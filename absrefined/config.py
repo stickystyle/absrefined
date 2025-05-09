@@ -32,13 +32,12 @@ def load_config(config_path: Optional[Path] = None) -> Dict[str, Any]:
 
     try:
         with open(search_path, "rb") as f:
-            # \'data\' is the raw dictionary parsed from the TOML file
+            # 'data' is the raw dictionary parsed from the TOML file
             data = tomli.load(f) 
         
-        # \'config_data\' will be the processed and validated dictionary we return
+        # 'config_data' will be the processed and validated dictionary we return
         config_data = {}
 
-        # --- Audiobookshelf (Mandatory) ---
         if "audiobookshelf" not in data:
             raise ConfigError("Missing \'audiobookshelf\' section in config")
         abs_config = data["audiobookshelf"]
@@ -55,7 +54,6 @@ def load_config(config_path: Optional[Path] = None) -> Dict[str, Any]:
         if config_data["audiobookshelf"]["timeout"] <= 0:
             raise ConfigError("audiobookshelf.timeout must be a positive integer.")
 
-        # --- Refiner (Partially Optional, keys checked by components) ---
         refiner_config_raw = data.get("refiner", {})
         config_data["refiner"] = {
             "openai_api_url": str(refiner_config_raw.get("openai_api_url", "")),
@@ -65,7 +63,6 @@ def load_config(config_path: Optional[Path] = None) -> Dict[str, Any]:
         }
         # Components (ChapterRefiner, AudioTranscriber) will raise errors if essential keys like api_key/url are missing.
 
-        # --- Processing ---
         processing_config_raw = data.get("processing", {})
         config_data["processing"] = {
             "search_window_seconds": int(processing_config_raw.get("search_window_seconds", 60)),
@@ -74,7 +71,6 @@ def load_config(config_path: Optional[Path] = None) -> Dict[str, Any]:
         if config_data["processing"]["search_window_seconds"] <= 0:
             raise ConfigError("processing.search_window_seconds must be a positive integer.")
 
-        # --- Logging ---
         logging_config_raw = data.get("logging", {})
         config_data["logging"] = {
             "level": str(logging_config_raw.get("level", "INFO")).upper(),
@@ -84,8 +80,8 @@ def load_config(config_path: Optional[Path] = None) -> Dict[str, Any]:
         if config_data["logging"]["level"] not in valid_log_levels:
             raise ConfigError(f"logging.level must be one of {valid_log_levels}")
 
-        # --- Costs (New Section, Optional) ---
-        costs_config_raw = data.get("costs", {}) # Read from raw \'data\'
+        # Read from raw 'data'
+        costs_config_raw = data.get("costs", {})
         llm_prompt_cost_raw = costs_config_raw.get("llm_refinement_cost_per_million_prompt_tokens")
         llm_completion_cost_raw = costs_config_raw.get("llm_refinement_cost_per_million_completion_tokens")
         transcription_cost_raw = costs_config_raw.get("audio_transcription_cost_per_minute")

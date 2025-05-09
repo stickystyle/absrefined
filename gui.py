@@ -650,6 +650,10 @@ class AbsRefinedApp:
                 if self.cancel_event.is_set():
                     raise InterruptedError("Task cancelled")
 
+                # Skip the first chapter (index 0) as it must always have start time of 0
+                if i == 0:
+                    continue
+
                 refined_time = chapter_info.get("refined_start")
                 default_apply = (
                     refined_time is not None

@@ -6,8 +6,8 @@ import re
 import shutil
 import subprocess
 import tempfile
-from typing import Dict, List, Tuple, Any, Callable, Optional
 from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from tqdm import tqdm
 
@@ -39,7 +39,6 @@ class ChapterRefinementTool:
         self.progress_callback = progress_callback
         self.logger = logging.getLogger(self.__class__.__name__)
 
-        # Initialize components using the config
         try:
             self.transcriber = AudioTranscriber(config=self.config)
             self.refiner = ChapterRefiner(config=self.config)
@@ -49,7 +48,6 @@ class ChapterRefinementTool:
             )
             raise
 
-        # Extract settings from config
         processing_config = self.config.get("processing", {})
         logging_config = self.config.get("logging", {})
 
@@ -58,7 +56,6 @@ class ChapterRefinementTool:
         )
         self.debug_preserve_files = logging_config.get("debug_files", False)
 
-        # Load cost parameters from config
         costs_config = self.config.get("costs", {})
         self.llm_cost_per_mil_prompt_tokens = costs_config.get(
             "llm_refinement_cost_per_million_prompt_tokens", 0.0
@@ -229,12 +226,14 @@ class ChapterRefinementTool:
             total_refined_tokens = 0
             total_transcribed_duration_seconds = 0.0
 
-            for processed_chapter in processed_chapters_list:
+            for i, processed_chapter in enumerate(processed_chapters_list):
                 original_start = processed_chapter.get("original_start")
                 refined_start = processed_chapter.get("refined_start")
 
+                # Skip counting the first chapter as refined, even if its start time is different
                 if (
-                    original_start is not None
+                    i > 0  # Skip the first chapter
+                    and original_start is not None
                     and refined_start is not None
                     and abs(refined_start - original_start)
                     > significant_change_threshold
@@ -324,6 +323,42 @@ class ChapterRefinementTool:
             )
 
             _update_progress(100, "Processing complete.")
+
+            # The first chapter should always start at 0, regardless of LLM output
+            # Add the 'refined_start_abs' to each original chapter for the update
+            chapters_for_update = []
+            id_to_refined_start_map = {}
+            for i, chapter in enumerate(original_chapters):
+                id_to_refined_start_map[chapter["id"]] = final_chapter_details[i][
+                    "refined_start"
+                ]
+                if final_chapter_details[i]["refined_start"] is not None:
+                    chapters_for_update.append(i)
+
+            # Cap at 99 before potential push
+            chapters_for_update = chapters_for_update[:99]
+
+            result["chapters_for_update"] = chapters_for_update
+            result["usage_and_cost"] = {
+                "total_prompt_tokens": total_prompt_tokens,
+                "total_completion_tokens": total_completion_tokens,
+                "total_refined_tokens": total_refined_tokens,
+                "estimated_llm_cost": refinement_cost,
+                "estimated_transcription_cost": transcription_cost,
+                "total_estimated_cost": refinement_cost + transcription_cost,
+            }
+
+            if dry_run:
+                _update_progress(100, "Changes not pushed to server.")
+
+            self.logger.info(f"Item processing completed for {item_id}.")
+            cost_info = result.get("usage_and_cost", {})
+            self.logger.info(
+                f"Tokens: Prompt={cost_info.get('total_prompt_tokens', 0)}, Completion={cost_info.get('total_completion_tokens', 0)}. Transcribed: {cost_info.get('total_transcribed_duration_seconds', 0):.2f}s"
+            )
+            self.logger.info(
+                f"Est. Costs: LLM=${cost_info.get('estimated_llm_cost', 0.0):.4f}, Transcription=${cost_info.get('estimated_transcription_cost', 0.0):.4f}, Total=${cost_info.get('total_estimated_cost', 0.0):.4f}"
+            )
 
         except EnvironmentError as e:
             self.logger.error(f"Environment error: {e}")
@@ -451,6 +486,25 @@ class ChapterRefinementTool:
                     f"Chapter '{chapter_title}' missing start time. Using 0.0 for original time."
                 )
                 original_start_time = 0.0
+
+            # Skip processing for first chapter (index 0) - it should always start at time 0
+            if i == 0:
+                self.logger.info(
+                    f"Skipping refinement for first chapter '{chapter_title}' - setting start time to 0.0"
+                )
+                all_chapter_details.append(
+                    {
+                        "id": chapter_id,
+                        "title": chapter_title,
+                        "original_start": original_start_time,
+                        "refined_start": 0.0,  # Always set to 0.0
+                        "chunk_path": None,
+                        "window_start_time": None,
+                        "usage_data": None,
+                        "chunk_duration_seconds": 0.0,
+                    }
+                )
+                continue
 
             # Define window ABSOLUTE boundaries
             window_start = max(0.0, original_start_time - search_window_seconds / 2)

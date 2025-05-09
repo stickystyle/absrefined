@@ -86,7 +86,7 @@ class AudioTranscriber:
         if self.debug_preserve_files:
             audio_filename_base = os.path.splitext(os.path.basename(audio_file))[0]
             debug_dir = os.path.dirname(audio_file)  # Save next to the audio chunk
-            os.makedirs(debug_dir, exist_ok=True)  # Ensure dir exists
+            os.makedirs(debug_dir, exist_ok=True)
             debug_transcript_path = os.path.join(
                 debug_dir, f"{audio_filename_base}_transcript_DEBUG.jsonl"
             )
@@ -161,22 +161,19 @@ class AudioTranscriber:
                 )
                 return []
 
-            adjusted_segments = []  # This will store our final segment list with adjusted times
+            adjusted_segments = []
 
             if openai_segments_raw:
                 self.logger.debug(
                     f"Processing {len(openai_segments_raw)} segments from API response."
                 )
                 for segment_raw in openai_segments_raw:
-                    # segment_raw is a Segment object from OpenAI library
                     adj_seg = {
                         "start": segment_raw.start + segment_start_time,
                         "end": segment_raw.end + segment_start_time,
                         "text": segment_raw.text.strip(),
-                        "words": [],  # Initialize words list for this segment
+                        "words": [],
                     }
-                    # OpenAI's verbose_json for whisper-1 might provide words within each segment
-                    # or a separate top-level 'words' list. Check segment_raw.words first.
                     segment_words_raw = (
                         segment_raw.words
                         if hasattr(segment_raw, "words") and segment_raw.words
@@ -184,17 +181,9 @@ class AudioTranscriber:
                     )
 
                     if not segment_words_raw and openai_words_raw:
-                        # If segment has no words, but top-level words exist, try to map them
-                        # This is complex; for now, we assume words are within segments if timestamp_granularities=["word"] is used.
-                        # Or, we use the top-level list if segment_raw.words is empty.
-                        # Let's use a simpler approach: if segment_raw.words is empty, iterate all openai_words_raw
-                        # and assign those whose time falls within this segment_raw's original time.
-                        # This is a fallback, ideally words are nested.
                         current_segment_orig_start = segment_raw.start
                         current_segment_orig_end = segment_raw.end
 
-                        # Filter top-level words that belong to the current segment
-                        # This assumes openai_words_raw contains words for the *entire* request (chunk)
                         relevant_top_level_words = [
                             w
                             for w in openai_words_raw
@@ -205,15 +194,14 @@ class AudioTranscriber:
                         ]
                         if relevant_top_level_words:
                             segment_words_raw = (
-                                relevant_top_level_words  # Use these instead
+                                relevant_top_level_words
                             )
-                            # self.logger.debug(f"Found {len(segment_words_raw)} words from top-level list for current segment.")
 
-                    for word_raw in segment_words_raw:  # word_raw is a Word object
+                    for word_raw in segment_words_raw:
                         if hasattr(word_raw, "start") and hasattr(word_raw, "end"):
                             adj_seg["words"].append(
                                 {
-                                    "word": word_raw.word.strip(),  # Strip whitespace from word itself
+                                    "word": word_raw.word.strip(),
                                     "start": word_raw.start + segment_start_time,
                                     "end": word_raw.end + segment_start_time,
                                     "probability": getattr(
@@ -286,7 +274,6 @@ class AudioTranscriber:
                     f"'{adjusted_segments[0]['text'][:50]}...'"
                 )
 
-            # --- File Writing for user-specified output_file (JSONL) ---
             if write_to_file and output_file:
                 # Ensure output_file path is absolute and directory exists
                 final_output_path = os.path.abspath(output_file)
@@ -341,3 +328,39 @@ class AudioTranscriber:
                 f"Unexpected error during transcription for {audio_file}: {e}"
             )
             raise  # Re-raise to be caught by caller
+
+    def transcribe_file(self, audio_path: str, output_file: str | None = None) -> Dict:
+        """
+        Transcribe an entire audio file and return the result as a dictionary.
+
+        Args:
+            audio_path (str): Path to the audio file.
+            output_file (str | None): Path to save the transcription output.
+
+        Returns:
+            Dict: Transcription result containing 'text' and 'segments'.
+        """
+        # Using 'refiner' as per previous config structure discussion
+        openai_config = self.config.get("refiner", {})
+        # Fallback if whisper model name not found in config
+        model_name = openai_config.get("whisper_model_name", "whisper-1")
+        # Default name for the transcript file if not provided
+        base_name = os.path.splitext(os.path.basename(audio_path))[0]
+        # Main file path for the transcription output (non-debug)
+        default_output_path = os.path.join(
+            os.path.dirname(audio_path), f"{base_name}_transcript.jsonl"
+        )
+
+        segments = self.transcribe_audio(
+            audio_path,
+            output_file=default_output_path,
+            segment_start_time=0,  # Assuming the file is the whole segment for this simpler method
+            write_to_file=True, # Always write for this public method unless overridden by caller
+        )
+
+        full_text = " ".join([seg["text"] for seg in segments if seg.get("text")])
+        self.logger.info(f"Transcription for {audio_path} completed. Text length: {len(full_text)}")
+        
+        # Basic error handling for API connection or authentication issues
+        # More specific errors are caught within transcribe_audio
+        return {"text": full_text, "segments": segments}

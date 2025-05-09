@@ -50,11 +50,6 @@ class ChapterRefiner:
             )
             raise
 
-        # self.window_size is removed; context window info (search_window_seconds) is passed to methods.
-
-    # verify_api_key method can be removed or kept if more detailed key validation is needed beyond client init.
-    # For now, successful client initialization is the primary check.
-
     def refine_chapter_start_time(
         self,
         transcript_segments: List[
@@ -175,8 +170,6 @@ class ChapterRefiner:
             self.logger.info(
                 f"Sending query to LLM (Model: {model_name}). Max tokens: {max_tokens}."
             )
-            # self.logger.debug(f"System Prompt: {system_prompt}") # Can be very verbose
-            # self.logger.debug(f"User Prompt (first 500 chars): {user_prompt[:500]}...")
 
             chat_completion_params = {
                 "model": model_name,

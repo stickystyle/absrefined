@@ -317,6 +317,10 @@ def main():
 
     cli_refined_count = 0
     for i, detail in enumerate(chapter_details):
+        # Skip the first chapter (index 0) as it must always have start time of 0
+        if i == 0:
+            continue
+
         original_start = detail.get("original_start")
         refined_start = detail.get("refined_start")
         chapter_title = detail.get("title", f"Chapter {i + 1}")
@@ -347,28 +351,24 @@ def main():
             # Check for significant change (and ignore first chapter for automatic updates)
             if abs(time_diff) > significant_change_threshold:
                 status_disp = "CHANGED"
-                if (
-                    i > 0
-                ):  # Only consider changes after chapter 0 significant for update
-                    cli_refined_count += 1
-                    change_info = {
-                        "index": i,
-                        "title": chapter_title,
-                        "id": chapter_id,
-                        "original": original_start,
-                        "refined": refined_start,
-                        "diff": time_diff,
-                    }
-                    changes_to_confirm.append(change_info)
-                    updates_for_server.append(
-                        {"id": chapter_id, "start": max(0.0, refined_start)}
-                    )  # Ensure start time >= 0
+                # Removed check for i > 0 since we now skip i == 0 already
+                cli_refined_count += 1
+                change_info = {
+                    "index": i,
+                    "title": chapter_title,
+                    "id": chapter_id,
+                    "original": original_start,
+                    "refined": refined_start,
+                    "diff": time_diff,
+                }
+                changes_to_confirm.append(change_info)
+                updates_for_server.append(
+                    {"id": chapter_id, "start": max(0.0, refined_start)}
+                )  # Ensure start time >= 0
             else:
                 status_disp = "No Change"
-        elif refined_start is None and i > 0:
+        elif refined_start is None:
             status_disp = "Refine Failed"
-        elif i == 0:
-            status_disp = "(First)"
 
         print(
             f"{i:<3d} | {title_disp} | {orig_disp:>13} | {ref_disp:>13} | {diff_disp:>8} | {status_disp}"

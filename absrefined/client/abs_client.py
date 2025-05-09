@@ -89,7 +89,7 @@ class AudiobookshelfClient:
         except requests.exceptions.RequestException as e:
             self.logger.error(f"Error getting item details for {item_id}: {e}")
             return {}  # Or raise a custom exception
-        except Exception as e:  # Catch other unexpected errors
+        except Exception as e:
             self.logger.error(
                 f"Unexpected error getting item details for {item_id}: {e}"
             )
@@ -120,7 +120,6 @@ class AudiobookshelfClient:
             self.logger.warning(
                 f"No audio tracks (audioFiles) found in media for item {item_id}"
             )
-            # Removed commented-out legacy 'tracks' lookup
             return ""
 
         self.logger.debug(f"Found {len(audio_files_info)} audio file entries.")

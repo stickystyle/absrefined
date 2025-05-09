@@ -26,11 +26,9 @@ def parse_timestamp(timestamp: Union[str, int, float]) -> float:
     Returns:
         float: Time in seconds
     """
-    # Handle numeric values (int or float)
     if isinstance(timestamp, (int, float)):
         return float(timestamp)
 
-    # Handle string timestamps
     if ":" not in timestamp:
         return float(timestamp)
 

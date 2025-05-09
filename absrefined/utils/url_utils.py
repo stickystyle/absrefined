@@ -16,10 +16,6 @@ def extract_item_id_from_url(url: str) -> str:
     # Regex to find item ID like lib-item-xxxx, or generic IDs (alphanumeric, underscore, hyphen)
     # It looks for /item/ followed by the ID, optionally followed by / or end of string.
     # Handles common ID patterns like 'lib-item-...', CUIDs, or generic alphanumeric IDs.
-    # Example patterns for IDs (more specific ones first):
-    # lib_pattern = r"lib-[0-9a-f]{32}" # Example: lib-item-123 (using a more general form below)
-    # cuid_pattern = r"c[a-z0-9]{24}"
-    # generic_id_pattern = r"[a-zA-Z0-9_-]{7,}" # Reasonably long alphanumeric ID
 
     # Combined pattern for typical /item/ID scenarios
     # Allows for trailing slashes or segments like /details or query parameters
