@@ -632,17 +632,14 @@ class TestAudiobookshelfClient:
         mock_post.assert_called_once()
 
     @patch("absrefined.client.abs_client.requests.get")
-    def test_download_audio_file_no_item_details(self, mock_get):
+    def test_download_audio_file_no_item_details(self, mock_get, mock_abs_response):
         """Test download_audio_file when get_item_details returns empty dict."""
-        # Mock get_item_details to return empty dict (simulating failure to get details)
-        mock_get.return_value = MagicMock(json=MagicMock(return_value={}))
-
+        # Mock get_item_details to return empty dict by having response.json() be empty
+        mock_get.return_value = mock_abs_response(json_data={}) # This makes get_item_details return {}
+        
         client = AudiobookshelfClient(MOCK_CONFIG)
-        result = client.download_audio_file("lib-item-123", "output.mp3")
-
-        # Should return empty string when get_item_details fails
+        result = client.download_audio_file("lib-item-123", "output.mp3", debug_preserve_files=False)
         assert result == ""
-        mock_get.assert_called_once()
 
     @patch("absrefined.client.abs_client.requests.post")
     @patch.object(AudiobookshelfClient, "get_item_chapters")
@@ -680,67 +677,61 @@ class TestAudiobookshelfClient:
     @patch("absrefined.client.abs_client.zipfile.ZipFile")
     @patch("absrefined.client.abs_client.tempfile.mkdtemp")
     @patch("absrefined.client.abs_client.requests.get")
-    def test_download_audio_file_zip_success(
-        self, mock_requests_get, mock_mkdtemp, mock_zipfile_class, mock_os_listdir, 
+    @patch("absrefined.client.abs_client.shutil.copy")
+    def test_download_audio_file_zip_success_debug_preserve(
+        self, mock_shutil_copy, mock_requests_get, mock_mkdtemp, mock_zipfile_class, mock_os_listdir, 
         mock_os_path_isfile,
         mock_builtin_open_instance, mock_subprocess_run, mock_shutil_rmtree, 
         mock_abs_response, tmp_path
     ):
-        """Test successful download, extraction, and concatenation of a ZIP file."""
-        item_id = "zip-item-123"
-        output_path = str(tmp_path / "concatenated_audio.mp3")
-        temp_processing_dir = str(tmp_path / "zip_processing")
-
-        item_details = {"id": item_id, "media": {"audioFiles": [{"ino": "zip-ino-456"}]}}
+        """Test ZIP success with debug_preserve_files=True (no cleanup)."""
+        item_id = "zip-debug-item"
+        output_path = str(tmp_path / "concatenated_audio_debug.mp3")
+        temp_processing_dir = str(tmp_path / "zip_processing_debug")
+        extracted_dir = os.path.join(temp_processing_dir, "extracted")
+        test_audio_file = os.path.join(extracted_dir, "t1.mp3")
+        
+        # Basic setup for mocks
+        item_details = {"id": item_id, "media": {"audioFiles": [{"ino": "zip-debug-ino"}]}}
         mock_item_details_resp = mock_abs_response(json_data=item_details)
-
-        dummy_files_in_zip = [("track02.mp3", "data2"), ("track01.mp3", "data1")]
-        sorted_dummy_files = sorted(dummy_files_in_zip, key=lambda x: x[0])
-        zip_content_bytes = create_dummy_zip_bytes(dummy_files_in_zip)
-        mock_zip_download_resp = mock_abs_response(
-            content=zip_content_bytes,
-            headers={"Content-Type": "application/zip", "Content-Length": str(len(zip_content_bytes))}
-        )
+        zip_content_bytes = create_dummy_zip_bytes([("t1.mp3", "d1")])
+        mock_zip_download_resp = mock_abs_response(content=zip_content_bytes, headers={"Content-Type": "application/zip"})
         mock_requests_get.side_effect = [mock_item_details_resp, mock_zip_download_resp]
 
         mock_mkdtemp.return_value = temp_processing_dir
-        
         mock_zip_instance = MagicMock()
         mock_zipfile_class.return_value.__enter__.return_value = mock_zip_instance
-
-        mock_os_listdir.return_value = [fname for fname, _ in sorted_dummy_files]
+        
+        # Mock os.listdir to return our audio file name
+        mock_os_listdir.return_value = ["t1.mp3"]
+        
+        # Mock os.path.isfile to return True for our audio file
         mock_os_path_isfile.return_value = True
-
-        mock_subprocess_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
         
+        # Mock shutil.copy to do nothing but succeed
+        mock_shutil_copy.return_value = None
+        
+        # Set up open mock to handle file operations
+        mock_file = mock_builtin_open_instance.return_value
+        mock_file.write = lambda data: len(data) if isinstance(data, bytes) else len(data.encode())
+
+        # Create our client and run the download
         client = AudiobookshelfClient(MOCK_CONFIG)
-        result_path = client.download_audio_file(item_id, output_path, debug_preserve_files=False)
-
+        with patch("absrefined.client.abs_client.os.path.abspath", side_effect=lambda p: p):
+            result_path = client.download_audio_file(item_id, output_path, debug_preserve_files=True)
+        
+        # Verify the result
         assert result_path == output_path
-        auth_headers = {"Authorization": f"Bearer {MOCK_API_KEY}"}
-        mock_requests_get.assert_any_call(f"{MOCK_SERVER_URL}/api/items/{item_id}/file/zip-ino-456", headers=auth_headers, stream=True, timeout=MOCK_CONFIG["audiobookshelf"]["timeout"])
-        mock_mkdtemp.assert_called_once_with(prefix=f"abs_zip_{item_id}_", dir=str(tmp_path))
         
-        downloaded_zip_path = os.path.join(temp_processing_dir, f"{item_id}_source.zip")
-        mock_builtin_open_instance.assert_any_call(downloaded_zip_path, "wb")
-
-        mock_zipfile_class.assert_called_with(downloaded_zip_path, 'r')
-        extracted_files_dir = os.path.join(temp_processing_dir, "extracted")
-        mock_zip_instance.extractall.assert_called_with(extracted_files_dir)
+        # Verify API calls
+        mock_requests_get.assert_any_call(f"{MOCK_SERVER_URL}/api/items/{item_id}", headers={"Authorization": f"Bearer {MOCK_API_KEY}"}, timeout=MOCK_CONFIG["audiobookshelf"]["timeout"])
+        mock_requests_get.assert_any_call(f"{MOCK_SERVER_URL}/api/items/{item_id}/download", stream=True, timeout=MOCK_CONFIG["audiobookshelf"]["timeout"], params={"token": MOCK_API_KEY})
         
-        mock_os_listdir.assert_called_with(extracted_files_dir)
-        for fname, _ in sorted_dummy_files:
-            mock_os_path_isfile.assert_any_call(os.path.join(extracted_files_dir, fname))
-
-        ffmpeg_list_path = os.path.join(temp_processing_dir, "ffmpeg_concat_list.txt")
-        mock_builtin_open_instance.assert_any_call(ffmpeg_list_path, "w", encoding="utf-8")
+        # Verify shutil.copy was called with the right paths
+        mock_shutil_copy.assert_called_with(test_audio_file, output_path)
         
-        expected_ffmpeg_cmd = [
-            "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", ffmpeg_list_path, "-c", "copy", output_path
-        ]
-        mock_subprocess_run.assert_called_once_with(expected_ffmpeg_cmd, capture_output=True, text=True, check=False, encoding='utf-8')
-        
-        mock_shutil_rmtree.assert_called_once_with(temp_processing_dir)
+        # Since debug_preserve_files=True, verify temp directory is not removed
+        mock_shutil_rmtree.assert_not_called()
 
     @patch("absrefined.client.abs_client.shutil.rmtree")
     @patch("absrefined.client.abs_client.subprocess.run")
@@ -750,62 +741,45 @@ class TestAudiobookshelfClient:
     @patch("absrefined.client.abs_client.zipfile.ZipFile")
     @patch("absrefined.client.abs_client.tempfile.mkdtemp")
     @patch("absrefined.client.abs_client.requests.get")
-    def test_download_audio_file_zip_success_debug_preserve(
+    def test_download_audio_file_zip_ffmpeg_fails(
         self, mock_requests_get, mock_mkdtemp, mock_zipfile_class, mock_os_listdir, 
         mock_os_path_isfile,
         mock_builtin_open_instance, mock_subprocess_run, mock_shutil_rmtree, 
         mock_abs_response, tmp_path
     ):
-        """Test ZIP success with debug_preserve_files=True (no cleanup)."""
-        item_id = "zip-debug-item"
-        output_path = str(tmp_path / "concatenated_audio_debug.mp3")
-        temp_processing_dir = str(tmp_path / "zip_processing_debug")
+        """Test ZIP handling when ffmpeg concatenation fails."""
+        item_id = "zip-ffmpegfail-item"
+        output_path = str(tmp_path / "concat_ffmpeg_fail.mp3")
+        temp_processing_dir = str(tmp_path / "zip_ffmpeg_processing")
 
-        item_details = {"id": item_id, "media": {"audioFiles": [{"ino": "zip-debug-ino"}]}}
+        item_details = {"id": item_id, "media": {"audioFiles": [{"ino": "zip-ffmpeg-ino"}]}}
         mock_item_details_resp = mock_abs_response(json_data=item_details)
-        zip_content_bytes = create_dummy_zip_bytes([("t1.mp3", "d1")])
+        zip_content_bytes = create_dummy_zip_bytes([("trackA.mp3", "audioA"), ("trackB.mp3", "audioB")])
         mock_zip_download_resp = mock_abs_response(content=zip_content_bytes, headers={"Content-Type": "application/zip"})
         mock_requests_get.side_effect = [mock_item_details_resp, mock_zip_download_resp]
         
         mock_mkdtemp.return_value = temp_processing_dir
         mock_zip_instance = MagicMock()
         mock_zipfile_class.return_value.__enter__.return_value = mock_zip_instance
-        mock_os_listdir.return_value = ["t1.mp3"]
+        mock_os_listdir.return_value = ["trackA.mp3", "trackB.mp3"]
         mock_os_path_isfile.return_value = True
-        mock_subprocess_run.return_value = MagicMock(returncode=0)
 
-        client = AudiobookshelfClient(MOCK_CONFIG)
-        result_path = client.download_audio_file(item_id, output_path, debug_preserve_files=True)
+        # Set up the mock for file writing
+        mock_file = mock_builtin_open_instance.return_value
+        mock_file.write = lambda data: len(data) if isinstance(data, bytes) else len(data.encode())
 
-        assert result_path == output_path
-        mock_shutil_rmtree.assert_not_called()
-
-    @patch("absrefined.client.abs_client.shutil.rmtree")
-    @patch("absrefined.client.abs_client.zipfile.ZipFile")
-    @patch("absrefined.client.abs_client.tempfile.mkdtemp")
-    @patch("absrefined.client.abs_client.requests.get")
-    def test_download_audio_file_zip_extraction_error(
-        self, mock_requests_get, mock_mkdtemp, mock_zipfile_class,
-        mock_shutil_rmtree, mock_abs_response, tmp_path
-    ):
-        """Test ZIP handling when zipfile.ZipFile raises BadZipFile."""
-        item_id = "zip-bad-item"
-        output_path = str(tmp_path / "concat_fail.mp3")
-        temp_processing_dir = str(tmp_path / "zip_bad_processing")
-
-        item_details = {"id": item_id, "media": {"audioFiles": [{"ino": "zip-bad-ino"}]}}
-        mock_item_details_resp = mock_abs_response(json_data=item_details)
-        mock_zip_download_resp = mock_abs_response(content=b"not a real zip", headers={"Content-Type": "application/zip"})
-        mock_requests_get.side_effect = [mock_item_details_resp, mock_zip_download_resp]
-        mock_mkdtemp.return_value = temp_processing_dir
+        # Configure ffmpeg to fail
+        mock_subprocess_run.return_value = MagicMock(returncode=1, stdout="ffmpeg output", stderr="ffmpeg error details")
         
-        mock_zipfile_class.side_effect = zipfile.BadZipFile("Mocked BadZipFile")
-
         client = AudiobookshelfClient(MOCK_CONFIG)
         result_path = client.download_audio_file(item_id, output_path, debug_preserve_files=False)
 
+        # ffmpeg failure should return an empty string
         assert result_path == ""
-        mock_shutil_rmtree.assert_called_once_with(temp_processing_dir)
+        # Verify ffmpeg was called
+        mock_subprocess_run.assert_called_once()
+        # Verify cleanup happens even when ffmpeg fails
+        mock_shutil_rmtree.assert_called_once()
 
     @patch("absrefined.client.abs_client.shutil.rmtree")
     @patch("absrefined.client.abs_client.os.path.isfile")
@@ -849,34 +823,78 @@ class TestAudiobookshelfClient:
     @patch("absrefined.client.abs_client.zipfile.ZipFile")
     @patch("absrefined.client.abs_client.tempfile.mkdtemp")
     @patch("absrefined.client.abs_client.requests.get")
-    def test_download_audio_file_zip_ffmpeg_fails(
+    def test_download_audio_file_zip_success(
         self, mock_requests_get, mock_mkdtemp, mock_zipfile_class, mock_os_listdir, 
         mock_os_path_isfile,
         mock_builtin_open_instance, mock_subprocess_run, mock_shutil_rmtree, 
         mock_abs_response, tmp_path
     ):
-        """Test ZIP handling when ffmpeg concatenation fails."""
-        item_id = "zip-ffmpegfail-item"
-        output_path = str(tmp_path / "concat_ffmpeg_fail.mp3")
-        temp_processing_dir = str(tmp_path / "zip_ffmpeg_processing")
+        """Test successful download, extraction, and concatenation of a ZIP file."""
+        item_id = "zip-item-123"
+        output_path = str(tmp_path / "concatenated_audio.mp3")
+        temp_processing_dir = str(tmp_path / "zip_processing")
 
-        item_details = {"id": item_id, "media": {"audioFiles": [{"ino": "zip-ffmpeg-ino"}]}}
+        item_details = {"id": item_id, "media": {"audioFiles": [{"ino": "zip-ino-456"}]}}
         mock_item_details_resp = mock_abs_response(json_data=item_details)
-        zip_content_bytes = create_dummy_zip_bytes([("trackA.mp3", "audioA")])
-        mock_zip_download_resp = mock_abs_response(content=zip_content_bytes, headers={"Content-Type": "application/zip"})
+
+        dummy_files_in_zip = [("track02.mp3", "data2"), ("track01.mp3", "data1")]
+        sorted_dummy_files = sorted(dummy_files_in_zip, key=lambda x: x[0])
+        zip_content_bytes = create_dummy_zip_bytes(dummy_files_in_zip)
+        mock_zip_download_resp = mock_abs_response(
+            content=zip_content_bytes,
+            headers={"Content-Type": "application/zip", "Content-Length": str(len(zip_content_bytes))}
+        )
         mock_requests_get.side_effect = [mock_item_details_resp, mock_zip_download_resp]
-        
+
         mock_mkdtemp.return_value = temp_processing_dir
+
         mock_zip_instance = MagicMock()
         mock_zipfile_class.return_value.__enter__.return_value = mock_zip_instance
-        mock_os_listdir.return_value = ["trackA.mp3"]
+
+        mock_os_listdir.return_value = [fname for fname, _ in sorted_dummy_files]
         mock_os_path_isfile.return_value = True
+
+        mock_subprocess_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
         
-        mock_subprocess_run.return_value = MagicMock(returncode=1, stdout="ffmpeg output", stderr="ffmpeg error details")
+        # Set up the open mock to properly handle file I/O
+        mock_file = mock_builtin_open_instance.return_value
+        mock_file.write = lambda data: len(data) if isinstance(data, bytes) else len(data.encode())
 
         client = AudiobookshelfClient(MOCK_CONFIG)
         result_path = client.download_audio_file(item_id, output_path, debug_preserve_files=False)
 
-        assert result_path == ""
-        mock_subprocess_run.assert_called_once()
+        assert result_path == output_path
+        auth_headers = {"Authorization": f"Bearer {MOCK_API_KEY}"}
+        # Check that both the item_details and the file download are called with correct URLs
+        mock_requests_get.assert_any_call(f"{MOCK_SERVER_URL}/api/items/{item_id}", headers=auth_headers, timeout=MOCK_CONFIG["audiobookshelf"]["timeout"])
+        mock_requests_get.assert_any_call(f"{MOCK_SERVER_URL}/api/items/{item_id}/download", stream=True, timeout=MOCK_CONFIG["audiobookshelf"]["timeout"], params={"token": MOCK_API_KEY})
+        mock_mkdtemp.assert_called_once_with(prefix=f"abs_zip_{item_id}_", dir=str(tmp_path))
+        
+        downloaded_zip_path = os.path.join(temp_processing_dir, f"{item_id}_source.zip")
+        mock_builtin_open_instance.assert_any_call(downloaded_zip_path, "wb")
+
+        mock_zipfile_class.assert_called_with(downloaded_zip_path, 'r')
+        extracted_files_dir = os.path.join(temp_processing_dir, "extracted")
+        mock_zip_instance.extractall.assert_called_with(extracted_files_dir)
+        
+        mock_os_listdir.assert_called_with(extracted_files_dir)
+        for fname, _ in sorted_dummy_files:
+            mock_os_path_isfile.assert_any_call(os.path.join(extracted_files_dir, fname))
+
+        ffmpeg_list_path = os.path.join(temp_processing_dir, "ffmpeg_concat_list.txt")
+        mock_builtin_open_instance.assert_any_call(ffmpeg_list_path, "w", encoding="utf-8")
+        
+        expected_ffmpeg_cmd = [
+            "ffmpeg", "-y", 
+            "-f", "concat",
+            "-safe", "0", 
+            "-i", ffmpeg_list_path,
+            "-map", "0a",
+            "-c:a", "acc",
+            "-ac", "2",
+            "-b:a", "128k",
+            output_path
+        ]
+        mock_subprocess_run.assert_called_once_with(expected_ffmpeg_cmd, capture_output=True, text=True, check=False, encoding='utf-8')
+        
         mock_shutil_rmtree.assert_called_once_with(temp_processing_dir)

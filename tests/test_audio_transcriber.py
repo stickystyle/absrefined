@@ -485,7 +485,7 @@ class TestAudioTranscriber:
         with pytest.raises(KeyError) as excinfo:
             AudioTranscriber(config=invalid_config)
 
-        assert "openai_api_key" in str(excinfo.value)
+        assert "API key for transcription not found in config" in str(excinfo.value)
 
     def test_openai_client_initialization_error(self):
         """Test that errors during OpenAI client initialization are propagated."""
@@ -719,7 +719,7 @@ class TestAudioTranscriber:
         # Create a response that would normally produce segments, but we'll mess with it
         # to simulate a scenario where adjusted_segments remains empty
         mock_response = MagicMock()
-        # Empty segments and words, but with a valid text (shouldn't get to segment creation)
+        # Empty segments and words, but with a valid text (will create a synthetic segment)
         mock_response.segments = []
         mock_response.words = []
         mock_response.text = "Some text that won't be used"
@@ -734,8 +734,11 @@ class TestAudioTranscriber:
                 mock_audio_file, output_file=None, write_to_file=False
             )
 
-            # Verify no segments were created
-            assert segments == []
+            # Verify that a synthetic segment was created from the full text
+            assert len(segments) == 1
+            assert segments[0]["text"] == "Some text that won't be used"
+            assert segments[0]["start"] == 0.0
+            assert segments[0]["end"] == 30.0
 
     def test_debug_logging_for_first_segment(
         self, mock_openai_client, mock_audio_file, caplog

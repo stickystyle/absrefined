@@ -112,11 +112,33 @@ class AudiobookshelfClient:
     def download_audio_file(self, item_id: str, output_path: str, debug_preserve_files: bool = False) -> str:
         """
         Download the audio for a library item.
-        The server provides a ZIP file which is extracted, and the contents are processed.
+        For ZIP files, the contents are extracted and processed.
         For single-file audiobooks, the file is copied directly to the output path.
         For multi-file audiobooks, the audio files are concatenated using ffmpeg.
         """
 
+        # Get item details to determine audio file info
+        item_details = self.get_item_details(item_id)
+        if not item_details:
+            self.logger.error(f"Could not retrieve details for item {item_id}")
+            return ""
+
+        audio_files = item_details.get("media", {}).get("audioFiles", [])
+        if not audio_files:
+            self.logger.error(f"No audio files found for item {item_id}")
+            return ""
+
+        if len(audio_files) == 0:
+            self.logger.error(f"Empty audio files array for item {item_id}")
+            return ""
+
+        # Get the first audio file's info
+        audio_file_info = audio_files[0]
+        if "ino" not in audio_file_info:
+            self.logger.error(f"Missing ino field in audio file info for item {item_id}")
+            return ""
+        
+        audio_ino = audio_file_info["ino"]
         file_url = f"{self.server_url}/api/items/{item_id}/download"
         
         # Ensure parent directory for output_path exists
@@ -130,8 +152,39 @@ class AudiobookshelfClient:
                 file_url, stream=True, timeout=self.request_timeout, params={"token": self.api_key}
             )
             response.raise_for_status()
-
-            # Create temporary directory for ZIP processing
+            
+            # Check content type to determine if it's a ZIP file
+            content_type = response.headers.get("Content-Type", "")
+            is_zip_file = "zip" in content_type.lower()
+            
+            self.logger.info(f"Content-Type: {content_type}, {'ZIP detected' if is_zip_file else 'non-ZIP file detected'}")
+            
+            if not is_zip_file:
+                # It's a direct audio file, write it directly to the output path
+                self.logger.info(f"Downloading audio file directly to {output_path}...")
+                content_length = response.headers.get("Content-Length")
+                
+                if content_length and content_length.isdigit():
+                    total_size = int(content_length)
+                    self.logger.info(f"File size: {total_size / (1024 * 1024):.2f} MB")
+                    with open(output_path, "wb") as f, tqdm(
+                        total=total_size, unit="B", unit_scale=True, desc=f"Downloading {os.path.basename(output_path)}"
+                    ) as pbar:
+                        for chunk in response.iter_content(chunk_size=8192):
+                            if chunk:
+                                f.write(chunk)
+                                pbar.update(len(chunk))
+                else:
+                    self.logger.info("Downloading audio file (size unknown)...")
+                    with open(output_path, "wb") as f:
+                        for chunk in response.iter_content(chunk_size=8192):
+                            if chunk:
+                                f.write(chunk)
+                            
+                self.logger.info("Audio file download complete.")
+                return output_path
+            
+            # ZIP file handling
             temp_dir_parent = os.path.dirname(os.path.abspath(output_path))
             zip_processing_dir = tempfile.mkdtemp(prefix=f"abs_zip_{item_id}_", dir=temp_dir_parent)
             self.logger.debug(f"Using temporary directory for ZIP processing: {zip_processing_dir}")

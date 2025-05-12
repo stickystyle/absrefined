@@ -204,15 +204,8 @@ def main():
 
     # --- Setup Logging ---
     log_level_config = config.get("logging", {}).get("level", "INFO").upper()
-    log_level = logging.INFO  # Default
-    if log_level_config == "DEBUG":
-        log_level = logging.DEBUG
-    elif log_level_config == "WARNING":
-        log_level = logging.WARNING
-    elif log_level_config == "ERROR":
-        log_level = logging.ERROR
-    elif log_level_config == "CRITICAL":
-        log_level = logging.CRITICAL
+
+    log_level = logging.getLevelNamesMapping()[log_level_config]
 
     # CLI flags override config level
     if args.debug:
@@ -225,7 +218,7 @@ def main():
         logging.root.removeHandler(handler)
         
     logging.basicConfig(
-        filename='app.log',
+        # filename='app.log',
         level=log_level,
         format="%(asctime)s [%(levelname)-8s] %(name)-25s: %(message)s",  # Wider name field
         datefmt="%Y-%m-%d %H:%M:%S",
