@@ -3,6 +3,11 @@ import requests
 from typing import Dict, List, Any
 from tqdm import tqdm
 import logging
+import json
+import zipfile
+import tempfile
+import shutil
+import subprocess
 
 
 class AudiobookshelfClient:
@@ -104,92 +109,150 @@ class AudiobookshelfClient:
             return []
         return item_details.get("media", {}).get("chapters", [])
 
-    def download_audio_file(self, item_id: str, output_path: str) -> str:
+    def download_audio_file(self, item_id: str, output_path: str, debug_preserve_files: bool = False) -> str:
         """
-        Download the complete audio file from a library item.
+        Download the audio for a library item.
+        The server provides a ZIP file which is extracted, and the contents are processed.
+        For single-file audiobooks, the file is copied directly to the output path.
+        For multi-file audiobooks, the audio files are concatenated using ffmpeg.
         """
-        details = self.get_item_details(item_id)
-        if not details:
-            self.logger.error(
-                f"Failed to get item details for {item_id}, cannot download."
-            )
-            return ""
 
-        audio_files_info = details.get("media", {}).get("audioFiles", [])
-        if not audio_files_info:
-            self.logger.warning(
-                f"No audio tracks (audioFiles) found in media for item {item_id}"
-            )
-            return ""
+        file_url = f"{self.server_url}/api/items/{item_id}/download"
+        
+        # Ensure parent directory for output_path exists
+        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
 
-        self.logger.debug(f"Found {len(audio_files_info)} audio file entries.")
-        # Assuming the first audio file is the one to download, or that they are concatenated.
-        # The API structure seems to point to 'ino' for the download URL part.
-
-        # Prefer audioFiles structure if available
-        if audio_files_info and "ino" in audio_files_info[0]:
-            file_ino = audio_files_info[0].get("ino")
-        else:
-            self.logger.error(
-                f"Could not determine 'ino' for audio download from item {item_id}"
-            )
-            return ""
-
-        if not file_ino:
-            self.logger.error(f"Audio file 'ino' is missing for item {item_id}")
-            return ""
-
-        file_url = f"{self.server_url}/api/items/{item_id}/file/{file_ino}"
-        headers = self._get_auth_headers()
+        zip_processing_dir = None 
 
         try:
-            self.logger.info(
-                f"Downloading complete audio file from {file_url} to {output_path}"
-            )
+            self.logger.info(f"Requesting audio data from {file_url}")
             response = requests.get(
-                file_url, headers=headers, stream=True, timeout=self.request_timeout
+                file_url, stream=True, timeout=self.request_timeout, params={"token": self.api_key}
             )
             response.raise_for_status()
 
+            # Create temporary directory for ZIP processing
+            temp_dir_parent = os.path.dirname(os.path.abspath(output_path))
+            zip_processing_dir = tempfile.mkdtemp(prefix=f"abs_zip_{item_id}_", dir=temp_dir_parent)
+            self.logger.debug(f"Using temporary directory for ZIP processing: {zip_processing_dir}")
+
+            downloaded_zip_path = os.path.join(zip_processing_dir, f"{item_id}_source.zip")
+            extracted_files_dir = os.path.join(zip_processing_dir, "extracted")
+            os.makedirs(extracted_files_dir, exist_ok=True)
+
+            # Download ZIP file
+            self.logger.info(f"Downloading ZIP file to {downloaded_zip_path}...")
             content_length = response.headers.get("Content-Length")
-
-            os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
-
             if content_length and content_length.isdigit():
                 total_size = int(content_length)
-                self.logger.info(
-                    f"Downloading approximately {total_size / (1024 * 1024):.2f} MB"
-                )
-                with (
-                    open(output_path, "wb") as f,
-                    tqdm(
-                        total=total_size,
-                        unit="B",
-                        unit_scale=True,
-                        desc=f"Downloading {os.path.basename(output_path)}",
-                    ) as pbar,
-                ):
+                self.logger.info(f"ZIP size: {total_size / (1024 * 1024):.2f} MB")
+                with open(downloaded_zip_path, "wb") as f, tqdm(
+                    total=total_size, unit="B", unit_scale=True, desc=f"Downloading ZIP {os.path.basename(downloaded_zip_path)}"
+                ) as pbar:
                     for chunk in response.iter_content(chunk_size=8192):
                         if chunk:
                             f.write(chunk)
                             pbar.update(len(chunk))
             else:
-                self.logger.info("Downloading audio (size unknown)...")
-                with open(output_path, "wb") as f:
+                self.logger.info("Downloading ZIP (size unknown)...")
+                with open(downloaded_zip_path, "wb") as f:
                     for chunk in response.iter_content(chunk_size=8192):
                         if chunk:
                             f.write(chunk)
+            self.logger.info("ZIP file download complete.")
 
-            self.logger.info(f"Successfully downloaded audio file to {output_path}")
-            return output_path
+            # Extract ZIP file
+            self.logger.info(f"Extracting ZIP file to {extracted_files_dir}...")
+            with zipfile.ZipFile(downloaded_zip_path, 'r') as zip_ref:
+                zip_ref.extractall(extracted_files_dir)
+            self.logger.info("ZIP extraction complete.")
+
+            # Find audio files in extracted directory
+            audio_file_paths = []
+            for f_name in sorted(os.listdir(extracted_files_dir)):
+                full_f_path = os.path.join(extracted_files_dir, f_name)
+                if os.path.isfile(full_f_path) and f_name.lower().endswith(('.mp3', '.m4a', '.ogg', '.wav', '.flac', '.opus', '.m4b')):
+                    audio_file_paths.append(os.path.abspath(full_f_path))
+            
+            if not audio_file_paths:
+                self.logger.error("No audio files found in the extracted ZIP.")
+                return ""
+            
+            # Update output path to match the extension of the actual audio file
+            # This ensures the file extension is correct regardless of what was requested
+            if audio_file_paths:
+                first_audio_file = audio_file_paths[0]
+                _, first_file_ext = os.path.splitext(first_audio_file)
+                output_base, output_ext = os.path.splitext(output_path)
+                
+                if first_file_ext and first_file_ext != output_ext:
+                    new_output_path = f"{output_base}{first_file_ext}"
+                    self.logger.info(f"Adjusting output path extension from {output_ext} to {first_file_ext}: {new_output_path}")
+                    output_path = new_output_path
+            
+            if len(audio_file_paths) == 1:
+                # Optimization for single-file case - just copy the file directly
+                self.logger.info(f"Single audio file found. Copying directly to {output_path}")
+                shutil.copy(audio_file_paths[0], output_path)
+                self.logger.info(f"Successfully copied single audio file to {output_path}")
+                return output_path
+            else:
+                # Multiple audio files need concatenation
+                self.logger.info(f"Found {len(audio_file_paths)} audio files for concatenation.")
+
+                # Create ffmpeg concat list
+                ffmpeg_list_file_path = os.path.join(zip_processing_dir, "ffmpeg_concat_list.txt")
+                with open(ffmpeg_list_file_path, "w", encoding="utf-8") as f_list:
+                    for audio_path_entry in audio_file_paths:
+                        line_content = f"file '{audio_path_entry}'"
+                        f_list.write(line_content + "\n")
+                
+                # Concatenate audio files using ffmpeg
+                self.logger.info(f"Concatenating audio files to {output_path} using ffmpeg...")
+                ffmpeg_cmd = [
+                    "ffmpeg", "-y", 
+                    "-f", "concat",
+                    "-safe", "0", 
+                    "-i", ffmpeg_list_file_path,
+                    "-map", "0a",
+                    "-c:a", "acc",
+                    "-ac", "2",
+                    "-b:a", "128k",
+                    output_path
+                ]
+                self.logger.debug(f"Executing ffmpeg command: {' '.join(ffmpeg_cmd)}")
+                process = subprocess.run(ffmpeg_cmd, capture_output=True, text=True, check=False, encoding='utf-8')
+                
+                if process.returncode != 0:
+                    self.logger.error(f"ffmpeg concatenation failed. Return code: {process.returncode}")
+                    self.logger.error(f"ffmpeg stdout: {process.stdout.strip() if process.stdout else '[No stdout]'}")
+                    self.logger.error(f"ffmpeg stderr: {process.stderr.strip() if process.stderr else '[No stderr]'}")
+                    return ""
+                
+                self.logger.info("ffmpeg concatenation successful.")
+                return output_path
+
         except requests.exceptions.RequestException as e:
-            self.logger.error(f"Error downloading audio for {item_id}: {e}")
+            self.logger.error(f"Error during audio download/processing for {item_id}: {e}")
+            return ""
+        except zipfile.BadZipFile as e:
+            self.logger.error(f"Error extracting ZIP file for {item_id}: {e}")
             return ""
         except Exception as e:
-            self.logger.error(f"Unexpected error downloading audio for {item_id}: {e}")
+            self.logger.error(f"Unexpected error during download/processing for {item_id}: {e}")
+            self.logger.exception("Details of unexpected error:")
             return ""
-
-    # Removed unused _fix_chapter_boundaries method
+        finally:
+            # Cleanup of temporary directory for ZIP processing
+            if zip_processing_dir and os.path.exists(zip_processing_dir):
+                if debug_preserve_files:
+                    self.logger.info(f"Debug mode: Preserving temporary ZIP processing directory: {zip_processing_dir}")
+                else:
+                    self.logger.debug(f"Cleaning up temporary ZIP processing directory: {zip_processing_dir}")
+                    try:
+                        shutil.rmtree(zip_processing_dir)
+                    except Exception as e_clean:
+                        self.logger.error(f"Failed to clean up temporary directory {zip_processing_dir}: {e_clean}")
 
     def update_chapters_start_time(
         self, item_id: str, chapter_updates: List[Dict]

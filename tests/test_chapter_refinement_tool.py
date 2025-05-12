@@ -372,31 +372,37 @@ class TestChapterRefinementTool:
         tool.logger = logging.getLogger("TestLogger")
 
         item_id = "test_item_needs_download"
-        m4a_path_str = os.path.join(mock_download_dir_str, f"{item_id}_full_audio.m4a")
+        # The prospective filename in _ensure_full_audio_downloaded uses item_id + _full_audio.m4a
+        # The actual path passed to client.download_audio_file is this one.
+        expected_download_path = os.path.join(
+            mock_download_dir_str, f"{item_id}_full_audio.m4a"
+        )
 
         # First, make sure os.path.exists returns False for all checks to trigger the download
         mock_os_path_exists.return_value = False
 
         # When download_audio_file is called, create the file and return its path
-        def download_side_effect(item_id, path):
-            Path(path).parent.mkdir(parents=True, exist_ok=True)
-            Path(path).touch()
-            # After creating the file, modify os.path.exists to return True for this path
-            mock_os_path_exists.return_value = True
-            return path
+        # Update side_effect to accept debug_preserve_files
+        def download_side_effect(item_id_arg, path_arg, debug_preserve_files=False):
+            Path(path_arg).parent.mkdir(parents=True, exist_ok=True)
+            Path(path_arg).touch()
+            # After creating the file, modify os.path.exists to return True for this specific path
+            # and False for others to simulate it now existing.
+            def specific_path_exists(p):
+                return p == expected_download_path
+            mock_os_path_exists.side_effect = specific_path_exists
+            return path_arg
 
         mock_abs_client.download_audio_file.side_effect = download_side_effect
 
         result_path = tool._ensure_full_audio_downloaded(item_id)
 
-        assert result_path == m4a_path_str, (
-            f"Expected {m4a_path_str}, got {result_path}"
-        )
-
-        # Make sure client's download_audio_file was called with correct args
+        assert result_path == expected_download_path
         mock_abs_client.download_audio_file.assert_called_once_with(
-            item_id, m4a_path_str
+            item_id, expected_download_path, debug_preserve_files=False
         )
+        # os.path.exists should have been called multiple times (initial checks, then after download)
+        assert mock_os_path_exists.call_count > 1
 
     @patch("shutil.which", return_value="ffmpeg_path")
     @patch("absrefined.refinement_tool.chapter_refinement_tool.os.path.exists")
@@ -429,7 +435,7 @@ class TestChapterRefinementTool:
 
         # Make sure client's download_audio_file was called
         mock_abs_client.download_audio_file.assert_called_once_with(
-            item_id, m4a_path_str
+            item_id, m4a_path_str, debug_preserve_files=False  # Added debug_preserve_files
         )
 
     @patch("shutil.which", return_value="ffmpeg_path")
@@ -453,6 +459,8 @@ class TestChapterRefinementTool:
         mock_abs_client.download_audio_file.return_value = m4a_path_str
 
         # Mock os.path.exists to return False for all paths
+        # This simulates the file "disappearing" after the client reports successful download
+        # because _ensure_full_audio_downloaded checks os.path.exists again.
         def path_exists_side_effect(path):
             return False
 
@@ -463,7 +471,7 @@ class TestChapterRefinementTool:
 
         # Make sure client's download_audio_file was called
         mock_abs_client.download_audio_file.assert_called_once_with(
-            item_id, m4a_path_str
+            item_id, m4a_path_str, debug_preserve_files=False  # Added debug_preserve_files
         )
 
     @patch("shutil.which", return_value="ffmpeg_path")

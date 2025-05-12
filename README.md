@@ -4,7 +4,7 @@ ABSRefined is a tool for improving chapter markers in audiobooks hosted on Audio
 
 ## Overview
 
-Somtimes audiobook chapter markers imported from external sources, aren't precisely aligned with the actual chapter beginnings (often indicated by spoken chapter titles or distinct pauses), this tool aims to fix that. This tool was a weekend project for me to experiment with the hyped Cursor.AI development tool.
+Somtimes audiobook chapter markers imported from external sources, aren't precisely aligned with the actual chapter beginnings (often indicated by spoken chapter titles or distinct pauses), this tool aims to fix that. This tool was a weekend project for me to experiment with the hyped Cursor.AI development tool; because why spend 20 minutes manually fixing an edge case, when you can spend multiple weekends of your time developing a project to do it for you?
 
 ABSRefined offers two interfaces:
 

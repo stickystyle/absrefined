@@ -120,7 +120,7 @@ class ChapterRefinementTool:
         )
 
         downloaded_path = self.abs_client.download_audio_file(
-            item_id, full_audio_path_to_check
+            item_id, full_audio_path_to_check, debug_preserve_files=self.debug_preserve_files
         )
 
         if not downloaded_path or not os.path.exists(downloaded_path):
@@ -130,6 +130,13 @@ class ChapterRefinementTool:
             return None
 
         self.logger.info(f"Download complete: {downloaded_path}")
+        
+        # If the downloaded path is different from the expected path, but the file exists,
+        # ensure we return the actual path where the file is located
+        if downloaded_path != full_audio_path_to_check and os.path.exists(downloaded_path):
+            self.logger.info(f"Note: Downloaded file path ({downloaded_path}) differs from expected path ({full_audio_path_to_check})")
+            return downloaded_path
+        
         return downloaded_path
 
     def process_item(
