@@ -40,6 +40,21 @@ class ChapterRefinementTool:
         self.logger = logging.getLogger(self.__class__.__name__)
 
         try:
+            # Log the transcription API being used
+            transcription_config = self.config.get("transcription", {})
+            use_local = transcription_config.get("use_local", False)
+            enable_fallback = transcription_config.get("enable_fallback", False)
+            self.logger.debug(f"Transcription config: use_local={use_local} (type: {type(use_local)}), enable_fallback={enable_fallback} (type: {type(enable_fallback)})")
+            
+            if use_local == True:  # Explicitly check for boolean True
+                api_url = transcription_config.get("api_url", "http://localhost:8000/v1")
+                if enable_fallback:
+                    self.logger.info(f"Using local transcription server at {api_url} with OpenAI fallback ENABLED")
+                else:
+                    self.logger.info(f"Using local transcription server at {api_url} with OpenAI fallback DISABLED")
+            else:
+                self.logger.info("Using standard OpenAI API for transcription")
+            
             self.transcriber = AudioTranscriber(config=self.config)
             self.refiner = ChapterRefiner(config=self.config)
         except KeyError as e:
@@ -487,6 +502,11 @@ class ChapterRefinementTool:
             chapter_id = chapter.get("id")
             chapter_title = chapter.get("title", f"Chapter {i + 1}")
             original_start_time = chapter.get("start")
+            
+            # Initialize variables to prevent UnboundLocalError
+            refined_start_time_abs = None
+            transcript_segments_absolute = None
+            usage_data = None
 
             if original_start_time is None:
                 self.logger.warning(
@@ -559,9 +579,6 @@ class ChapterRefinementTool:
             segment_extracted = self._extract_audio_segment(
                 full_audio_path, window_start, window_end, chunk_audio_path
             )
-
-            refined_start_time_abs = None  # Initialize
-            transcript_segments_absolute = None  # Store absolute transcript temporarily
 
             if segment_extracted and os.path.exists(chunk_audio_path):
                 _update_chapter_progress(i, "Transcribing segment...")

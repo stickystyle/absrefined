@@ -63,6 +63,16 @@ def load_config(config_path: Optional[Path] = None) -> Dict[str, Any]:
         }
         # Components (ChapterRefiner, AudioTranscriber) will raise errors if essential keys like api_key/url are missing.
 
+        # Add the transcription section if it exists in the raw data
+        transcription_config_raw = data.get("transcription", {})
+        config_data["transcription"] = {
+            "use_local": bool(transcription_config_raw.get("use_local", False)),
+            "enable_fallback": bool(transcription_config_raw.get("enable_fallback", False)),
+            "api_url": str(transcription_config_raw.get("api_url", "")),
+            "api_key": str(transcription_config_raw.get("api_key", "")),
+            "whisper_model_name": str(transcription_config_raw.get("whisper_model_name", ""))
+        }
+        
         processing_config_raw = data.get("processing", {})
         config_data["processing"] = {
             "search_window_seconds": int(processing_config_raw.get("search_window_seconds", 60)),

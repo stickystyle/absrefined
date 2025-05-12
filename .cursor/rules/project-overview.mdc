@@ -15,3 +15,4 @@ This project provides tools for improving chapter markers in audiobooks hosted o
 - [absrefined/refiner/chapter_refiner.py](mdc:absrefined/refiner/chapter_refiner.py): Refines chapter markers using LLM
 - [absrefined/refinement_tool/chapter_refinement_tool.py](mdc:absrefined/refinement_tool/chapter_refinement_tool.py): Orchestrates the refinement process
 - [absrefined/utils/timestamp.py](mdc:absrefined/utils/timestamp.py): Utilities for timestamp handling
+- [absrefined/whispersrv/app.py](mdc:absrefined/whispersrv/app.py): Optional local OpenAI API compatible server for performing transcriptions locally

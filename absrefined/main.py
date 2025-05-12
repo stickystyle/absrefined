@@ -235,9 +235,7 @@ def main():
     logger.info(f"Logging level set to: {logging.getLevelName(log_level)}")
     if args.debug:
         logger.debug("Debug logging enabled.")
-        logging.getLogger("requests.packages.urllib3").setLevel(logging.DEBUG)
-        # You could also set config['logging']['debug_files'] = True here if desired,
-        # but it might be cleaner to keep file preservation tied strictly to the config file setting.
+
 
     # --- Extract Item ID and Initialize Client/Tool ---
     item_id = None

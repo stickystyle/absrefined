@@ -94,7 +94,7 @@ class ChapterRefiner:
             "- start: segment start (relative to window start)\n"
             "- end: segment end (relative to window start)\n"
             "- text: transcribed text\n"
-            "- words: array of {word, start, end, probability} (timestamps relative to window start)\n\n"
+            "- words: array of {word, start, end} (timestamps relative to window start)\n\n"
             "Analyze for chapter transition markers (explicit announcements, epigraphs, significant pauses, narrative breaks).\n"
             "IMPORTANT: When you identify the start of the chapter (e.g., the word 'Chapter', first word of title/epigraph, or first word after a pause), use the `start` timestamp of **that specific word** as the precise chapter start time within this window.\n"
             f"The original target timestamp within this window is {target_time_seconds:.2f}s. The actual start should be near this time.\n\n"
