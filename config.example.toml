@@ -29,8 +29,28 @@ model_name = "gpt-4o-mini"
 
 
 [transcription]
-# Configuration for Audio Transcription (Currently uses the same OpenAI settings)
-# Future versions might allow separate transcription services.
+# Configuration for Audio Transcription
+
+# Use local Whisper server instead of OpenAI API
+# use_local = false
+
+# Enable fallback to OpenAI API if local server fails (could incur costs)
+# enable_fallback = true
+
+# API URL for transcription (OpenAI compatible server)
+# Examples: "http://localhost:8000/v1" for local whispersrv
+# Leave commented to use OpenAI API settings from [refiner]
+# api_url = "http://localhost:8000/v1"
+
+# API Key for transcription service (can be dummy for local server)
+# Leave commented to use OpenAI API key from [refiner]
+# api_key = "local-key"
+
+# Whisper model name to use for transcription
+# For OpenAI API: "whisper-1"
+# For local servers: "whisper-turbo", "mlx-community/whisper-turbo", etc.
+# Leave commented to use same model_name from [refiner]
+# whisper_model_name = "mlx-community/whisper-turbo"
 
 # Optional: Whisper model size (passed during transcription if using local Whisper)
 # Examples: "tiny", "base", "small", "medium", "large-v2", "large-v3"
