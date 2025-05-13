@@ -69,6 +69,10 @@ model_name = "gpt-4o-mini"
 # Default: 30
 search_window_seconds = 30
 
+# Threshold in seconds for considering a chapter change significant enough to report/update
+# Default: 0.5
+significant_change_threshold = 0.5
+
 # Path for temporary audio file downloads
 # Default: "temp_gui" if run via GUI, or system temp if run via CLI
 # Example: "/path/to/your/temp/folder"

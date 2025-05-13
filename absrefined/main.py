@@ -321,7 +321,7 @@ def main():
 
     changes_to_confirm = []
     updates_for_server = []
-    significant_change_threshold = 0.5  # seconds (CLI threshold for reporting/updating)
+    significant_change_threshold = config.get("processing", {}).get("significant_change_threshold", 0.5)  # seconds (CLI threshold for reporting/updating)
 
     print("\n=== Chapter Comparison ===")
     print(

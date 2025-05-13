@@ -127,6 +127,7 @@ class AbsRefinedApp:
             # Extract Processing settings
             processing_config = self.config.get("processing", {})
             self.default_window = processing_config.get("search_window_seconds", 60)
+            self.significant_change_threshold = processing_config.get("significant_change_threshold", 0.5)  # default to 0.5s
 
             # Use system temp directory by default
             if (
@@ -360,15 +361,16 @@ class AbsRefinedApp:
             self.scrollable_frame, padding="5 0"
         )  # Padding top/bottom only
         header_frame.grid(
-            row=0, column=0, sticky="ew", columnspan=5
-        )  # Span across all columns
+            row=0, column=0, sticky="ew", columnspan=6
+        )  # Updated to span 6 columns
 
         col_weights = {
-            0: 0,
-            1: 2,
-            2: 1,
-            3: 1,
-            4: 0,
+            0: 0,  # Apply checkbox
+            1: 2,  # Chapter title
+            2: 1,  # Original time
+            3: 1,  # Refined time
+            4: 1,  # Diff (new)
+            5: 0,  # Play button
         }  # Adjust weights: Chapter title gets more space
         padx_val = 5
 
@@ -396,16 +398,22 @@ class AbsRefinedApp:
         )
         header_frame.columnconfigure(3, weight=col_weights[3])
 
-        # Play button column (fixed width)
-        ttk.Label(header_frame, text="Play Audio", anchor="center").grid(
-            row=0, column=4, padx=padx_val
+        # Diff column (new)
+        ttk.Label(header_frame, text="Diff", anchor="w").grid(
+            row=0, column=4, padx=padx_val, sticky="w"
         )
         header_frame.columnconfigure(4, weight=col_weights[4])
 
+        # Play button column (fixed width)
+        ttk.Label(header_frame, text="Play Audio", anchor="center").grid(
+            row=0, column=5, padx=padx_val
+        )
+        header_frame.columnconfigure(5, weight=col_weights[5])
+
         # Separator below headers
         ttk.Separator(self.scrollable_frame, orient="horizontal").grid(
-            row=1, column=0, sticky="ew", pady=2, columnspan=5
-        )
+            row=1, column=0, sticky="ew", pady=2, columnspan=6
+        )  # Updated to span 6 columns
 
     def _setup_usage_cost_labels(self):
         """Creates and grids the labels for usage and cost display."""
@@ -821,6 +829,13 @@ class AbsRefinedApp:
         chunk_path = chapter_data.get("chunk_path")
         window_start = chapter_data.get("window_start_time")
 
+        # Calculate time difference (new)
+        time_diff = 0.0
+        if refined_time is not None and original_time is not None:
+            time_diff = refined_time - original_time
+            # Add the diff to the result_item for later reference
+            result_item["time_diff"] = time_diff
+
         # --- Create Widgets ---
         apply_check = ttk.Checkbutton(frame, variable=apply_var)
 
@@ -838,6 +853,10 @@ class AbsRefinedApp:
             format_timestamp(refined_time) if refined_time is not None else "---"
         )
         refined_label = ttk.Label(frame, text=refined_ts_str, anchor="w")
+
+        # Add time diff display (new)
+        diff_str = f"{time_diff:+.3f}s" if refined_time is not None else "---"
+        diff_label = ttk.Label(frame, text=diff_str, anchor="w")
 
         # Determine the absolute time to play (refined if available, else original)
         absolute_play_time = refined_time if refined_time is not None else original_time
@@ -858,13 +877,22 @@ class AbsRefinedApp:
         title_label.grid(row=start_row, column=1, padx=padx_val, sticky="w")
         orig_label.grid(row=start_row, column=2, padx=padx_val, sticky="w")
         refined_label.grid(row=start_row, column=3, padx=padx_val, sticky="w")
-        play_button.grid(row=start_row, column=4, padx=padx_val, sticky="ew")
+        # Add diff column (new)
+        diff_label.grid(row=start_row, column=4, padx=padx_val, sticky="w")
+        play_button.grid(row=start_row, column=5, padx=padx_val, sticky="ew")  # Moved to column 5
 
         # --- Configure State ---
-        can_apply = refined_time is not None and refined_time != original_time
+        # Update to use significant_change_threshold (new)
+        can_apply = (refined_time is not None and 
+                     refined_time != original_time and 
+                     abs(time_diff) > self.significant_change_threshold)
+                      
+        # Auto-check and enable the checkbox based on threshold
         if not can_apply:
             apply_check.config(state=tk.DISABLED)
             apply_var.set(False)  # Ensure it's unchecked if disabled
+        else:
+            apply_var.set(True)  # Auto-check if significant change
 
         # Disable play button if chunk_path or window_start is missing (shouldn't happen for ch > 0)
         if not chunk_path or window_start is None:

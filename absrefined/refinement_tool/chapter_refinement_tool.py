@@ -240,7 +240,8 @@ class ChapterRefinementTool:
             _update_progress(95, "Finalizing results...")
             final_chapter_details = []
             refined_count = 0
-            significant_change_threshold = 0.1
+            
+            significant_change_threshold = self.config.get("processing", {}).get("significant_change_threshold", 0.1)
 
             # Accumulators for usage and cost calculation
             total_prompt_tokens = 0
