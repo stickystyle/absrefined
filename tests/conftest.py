@@ -1,9 +1,7 @@
-import json
-import os
 import pytest
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 
 # Mock the mlx_whisper module for tests

@@ -1,12 +1,10 @@
 import pytest
 from unittest.mock import patch, MagicMock, ANY, mock_open
-import json
 import os
 import logging
 from pathlib import Path
 from absrefined.transcriber.audio_transcriber import AudioTranscriber
 from openai import (
-    OpenAI,
     APIConnectionError,
     AuthenticationError,
     RateLimitError,
@@ -752,7 +750,7 @@ class TestAudioTranscriber:
         with patch(
             "builtins.open", new_callable=mock_open, read_data=b"dummy_audio_data"
         ):
-            with caplog.at_level(logging.DEBUG, logger=f"AudioTranscriber"):
+            with caplog.at_level(logging.DEBUG, logger="AudioTranscriber"):
                 segments = transcriber.transcribe_audio(
                     mock_audio_file, output_file=None, write_to_file=False
                 )

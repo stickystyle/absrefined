@@ -2,7 +2,6 @@
 import argparse
 import logging
 import os
-import re
 import shutil
 import tempfile
 import atexit
@@ -166,7 +165,6 @@ def main():
         )
         logging.debug(f"Using system temp directory for downloads: {temp_subdir}")
         atexit.register(_cleanup_temp_files, temp_subdir)  # Always clean up system temp
-        is_path_auto_generated = True
     else:
         # Path was set by config or CLI. Decide if it should be cleaned.
         # debug_files: (Optional, boolean) If true, preserves intermediate files... in the download path
@@ -475,7 +473,7 @@ def main():
                 )
             else:
                 logger.info(
-                    f"  Estimated Cost:    Not calculated (costs not configured or are zero)"
+                    "  Estimated Cost:    Not calculated (costs not configured or are zero)"
                 )
 
         if transcription_usage:
@@ -489,7 +487,7 @@ def main():
                 )
             else:
                 logger.info(
-                    f"  Estimated Cost:    Not calculated (cost not configured or is zero)"
+                    "  Estimated Cost:    Not calculated (cost not configured or is zero)"
                 )
 
     logger.info("Refinement process complete.")

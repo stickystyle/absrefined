@@ -1,20 +1,17 @@
-import json
 import logging
-import math
 import os
 import re
 import shutil
 import subprocess
 import tempfile
-from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List
 
 from tqdm import tqdm
 
 from absrefined.client.abs_client import AudiobookshelfClient
 from absrefined.refiner.chapter_refiner import ChapterRefiner
 from absrefined.transcriber.audio_transcriber import AudioTranscriber
-from absrefined.utils.timestamp import format_timestamp, parse_timestamp
+from absrefined.utils.timestamp import format_timestamp
 
 
 class ChapterRefinementTool:
@@ -48,7 +45,7 @@ class ChapterRefinementTool:
                 f"Transcription config: use_local={use_local} (type: {type(use_local)}), enable_fallback={enable_fallback} (type: {type(enable_fallback)})"
             )
 
-            if use_local == True:  # Explicitly check for boolean True
+            if use_local is True:  # Pythonic comparison with boolean
                 api_url = transcription_config.get(
                     "api_url", "http://localhost:8000/v1"
                 )
@@ -493,7 +490,7 @@ class ChapterRefinementTool:
         )  # Progress percentage allocated to this loop
 
         self.logger.info(
-            f"Starting chapter refinement for {item_id} with {len(chapters)} chapters"
+            f"Starting chapter refinement for {item_id} with {len(original_chapters)} chapters"
         )
         self.logger.debug(f"Using search window: {search_window_seconds} seconds")
 

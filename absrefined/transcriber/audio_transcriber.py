@@ -37,11 +37,11 @@ class AudioTranscriber:
         self.openai_api_url = self.config.get("refiner", {}).get("openai_api_url")
 
         # Track whether we're using local server for fallback logic
-        self.use_local = use_local == True
+        self.use_local = use_local is True
 
         # Check if fallback is enabled
         self.enable_fallback = (
-            transcription_config.get("enable_fallback", False) == True
+            transcription_config.get("enable_fallback", False) is True
         )
 
         # Use dedicated transcription API settings if available, otherwise fall back to refiner
@@ -74,7 +74,7 @@ class AudioTranscriber:
             # Fall back to refiner config for backward compatibility
             self.api_key = self.openai_api_key
             self.base_url = self.openai_api_url
-            self.logger.debug(f"Using OpenAI API for transcription")
+            self.logger.debug("Using OpenAI API for transcription")
 
         if not self.api_key:
             raise KeyError("API key for transcription not found in config")
@@ -184,7 +184,7 @@ class AudioTranscriber:
 
                     with open(audio_file, "rb") as audio_data:
                         self.logger.info(
-                            f"Attempting fallback transcription with OpenAI model: whisper-1"
+                            "Attempting fallback transcription with OpenAI model: whisper-1"
                         )
                         response = fallback_client.audio.transcriptions.create(
                             model="whisper-1",  # Always use stable OpenAI model for fallback
@@ -552,10 +552,7 @@ class AudioTranscriber:
         Returns:
             Dict: Transcription result containing 'text' and 'segments'.
         """
-        # Using 'refiner' as per previous config structure discussion
-        openai_config = self.config.get("refiner", {})
-        # Fallback if whisper model name not found in config
-        model_name = openai_config.get("whisper_model_name", "whisper-1")
+
         # Default name for the transcript file if not provided
         base_name = os.path.splitext(os.path.basename(audio_path))[0]
         # Main file path for the transcription output (non-debug)

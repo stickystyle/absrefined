@@ -1,6 +1,5 @@
 import pytest
-from unittest.mock import patch, MagicMock, call, ANY, mock_open
-import json
+from unittest.mock import patch, MagicMock, call
 import os
 from pathlib import Path
 import logging
@@ -10,8 +9,6 @@ from absrefined.refinement_tool.chapter_refinement_tool import ChapterRefinement
 from absrefined.client.abs_client import AudiobookshelfClient
 from absrefined.transcriber.audio_transcriber import AudioTranscriber
 from absrefined.refiner.chapter_refiner import ChapterRefiner
-from absrefined.utils.timestamp import format_timestamp
-from absrefined.config import get_config  # For MOCK_TOOL_CONFIG
 from absrefined.utils.url_utils import extract_item_id_from_url  # Added import
 
 
@@ -334,7 +331,6 @@ class TestChapterRefinementTool:
         tool.logger = logging.getLogger("TestLogger")
 
         item_id = "test_item_mp3_exists"
-        m4a_path_str = os.path.join(mock_download_dir_str, f"{item_id}_full_audio.m4a")
         mp3_path_str = os.path.join(mock_download_dir_str, f"{item_id}_full_audio.mp3")
 
         # Configure os.path.exists to return True for mp3 and False for all others

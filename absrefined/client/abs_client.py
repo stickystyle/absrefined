@@ -142,7 +142,6 @@ class AudiobookshelfClient:
             )
             return ""
 
-        audio_ino = audio_file_info["ino"]
         file_url = f"{self.server_url}/api/items/{item_id}/download"
 
         # Ensure parent directory for output_path exists

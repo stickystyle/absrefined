@@ -1,10 +1,12 @@
-from fastapi import FastAPI, File, UploadFile, Form, Query, HTTPException
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from typing import List, Optional, Dict, Any
 import logging
-import time
-import sys
 import os
+import sys
+import tempfile
+import time
 import mlx_whisper
+from pydantic import BaseModel
 
 # Configure logging
 logging.basicConfig(
@@ -13,11 +15,6 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger("whisper-server")
-
-
-import tempfile
-import os
-from pydantic import BaseModel
 
 app = FastAPI(
     title="Local Whisper API",

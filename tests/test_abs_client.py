@@ -1,15 +1,10 @@
 import pytest
 from unittest.mock import patch, MagicMock, mock_open
-import json
 import os
 import requests
-
-# New imports for ZIP testing
+from pathlib import Path
 import io
 import zipfile
-import tempfile  # Though we mock client's tempfile, it's good practice for clarity
-import shutil  # Though we mock client's shutil, it's good practice for clarity
-import subprocess  # Though we mock client's subprocess, it's good practice for clarity
 
 from absrefined.client.abs_client import AudiobookshelfClient
 
@@ -415,7 +410,9 @@ class TestAudiobookshelfClient:
         mock_file_open.assert_called_with(output_path, "wb")
 
     @patch("absrefined.client.abs_client.requests.get")
-    def test_download_audio_file_no_item_details(self, mock_get, mock_abs_response):
+    def test_download_audio_file_no_item_details_empty_response(
+        self, mock_get, mock_abs_response
+    ):
         """Test download_audio_file when get_item_details returns empty dict."""
         # Mock get_item_details to return empty dict by having response.json() be empty
         mock_get.return_value = mock_abs_response(
