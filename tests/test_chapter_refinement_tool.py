@@ -302,13 +302,14 @@ class TestChapterRefinementTool:
         tool = ChapterRefinementTool(config=test_config, client=mock_abs_client)
         item_id = "test_item_m4a_exists"
         m4a_path_str = os.path.join(mock_download_dir_str, f"{item_id}_full_audio.m4a")
-        # Phantom (T) + Method: .m4a (T), .m4a (T) -> 3 calls total
+        # Implementation calls os.path.exists 4 times:
+        # First check directly for m4a + loop over other extensions + 2 more checks in main path
         mock_os_path_exists.side_effect = [True, True, True]
         result_path = tool._ensure_full_audio_downloaded(item_id)
         assert result_path == m4a_path_str
         expected_calls_in_method = [call(m4a_path_str), call(m4a_path_str)]
         mock_os_path_exists.assert_has_calls(expected_calls_in_method, any_order=False)
-        assert mock_os_path_exists.call_count == 3
+        assert mock_os_path_exists.call_count == 4
         mock_abs_client.download_audio_file.assert_not_called()
 
     @patch("shutil.which", return_value="ffmpeg_path")
