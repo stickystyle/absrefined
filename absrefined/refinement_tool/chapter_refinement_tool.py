@@ -44,17 +44,25 @@ class ChapterRefinementTool:
             transcription_config = self.config.get("transcription", {})
             use_local = transcription_config.get("use_local", False)
             enable_fallback = transcription_config.get("enable_fallback", False)
-            self.logger.debug(f"Transcription config: use_local={use_local} (type: {type(use_local)}), enable_fallback={enable_fallback} (type: {type(enable_fallback)})")
-            
+            self.logger.debug(
+                f"Transcription config: use_local={use_local} (type: {type(use_local)}), enable_fallback={enable_fallback} (type: {type(enable_fallback)})"
+            )
+
             if use_local == True:  # Explicitly check for boolean True
-                api_url = transcription_config.get("api_url", "http://localhost:8000/v1")
+                api_url = transcription_config.get(
+                    "api_url", "http://localhost:8000/v1"
+                )
                 if enable_fallback:
-                    self.logger.info(f"Using local transcription server at {api_url} with OpenAI fallback ENABLED")
+                    self.logger.info(
+                        f"Using local transcription server at {api_url} with OpenAI fallback ENABLED"
+                    )
                 else:
-                    self.logger.info(f"Using local transcription server at {api_url} with OpenAI fallback DISABLED")
+                    self.logger.info(
+                        f"Using local transcription server at {api_url} with OpenAI fallback DISABLED"
+                    )
             else:
                 self.logger.info("Using standard OpenAI API for transcription")
-            
+
             self.transcriber = AudioTranscriber(config=self.config)
             self.refiner = ChapterRefiner(config=self.config)
         except KeyError as e:
@@ -135,7 +143,9 @@ class ChapterRefinementTool:
         )
 
         downloaded_path = self.abs_client.download_audio_file(
-            item_id, full_audio_path_to_check, debug_preserve_files=self.debug_preserve_files
+            item_id,
+            full_audio_path_to_check,
+            debug_preserve_files=self.debug_preserve_files,
         )
 
         if not downloaded_path or not os.path.exists(downloaded_path):
@@ -145,13 +155,17 @@ class ChapterRefinementTool:
             return None
 
         self.logger.info(f"Download complete: {downloaded_path}")
-        
+
         # If the downloaded path is different from the expected path, but the file exists,
         # ensure we return the actual path where the file is located
-        if downloaded_path != full_audio_path_to_check and os.path.exists(downloaded_path):
-            self.logger.info(f"Note: Downloaded file path ({downloaded_path}) differs from expected path ({full_audio_path_to_check})")
+        if downloaded_path != full_audio_path_to_check and os.path.exists(
+            downloaded_path
+        ):
+            self.logger.info(
+                f"Note: Downloaded file path ({downloaded_path}) differs from expected path ({full_audio_path_to_check})"
+            )
             return downloaded_path
-        
+
         return downloaded_path
 
     def process_item(
@@ -240,8 +254,10 @@ class ChapterRefinementTool:
             _update_progress(95, "Finalizing results...")
             final_chapter_details = []
             refined_count = 0
-            
-            significant_change_threshold = self.config.get("processing", {}).get("significant_change_threshold", 0.1)
+
+            significant_change_threshold = self.config.get("processing", {}).get(
+                "significant_change_threshold", 0.1
+            )
 
             # Accumulators for usage and cost calculation
             total_prompt_tokens = 0
@@ -503,7 +519,7 @@ class ChapterRefinementTool:
             chapter_id = chapter.get("id")
             chapter_title = chapter.get("title", f"Chapter {i + 1}")
             original_start_time = chapter.get("start")
-            
+
             # Initialize variables to prevent UnboundLocalError
             refined_start_time_abs = None
             transcript_segments_absolute = None

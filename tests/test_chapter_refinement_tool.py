@@ -386,10 +386,12 @@ class TestChapterRefinementTool:
         def download_side_effect(item_id_arg, path_arg, debug_preserve_files=False):
             Path(path_arg).parent.mkdir(parents=True, exist_ok=True)
             Path(path_arg).touch()
+
             # After creating the file, modify os.path.exists to return True for this specific path
             # and False for others to simulate it now existing.
             def specific_path_exists(p):
                 return p == expected_download_path
+
             mock_os_path_exists.side_effect = specific_path_exists
             return path_arg
 
@@ -435,7 +437,9 @@ class TestChapterRefinementTool:
 
         # Make sure client's download_audio_file was called
         mock_abs_client.download_audio_file.assert_called_once_with(
-            item_id, m4a_path_str, debug_preserve_files=False  # Added debug_preserve_files
+            item_id,
+            m4a_path_str,
+            debug_preserve_files=False,  # Added debug_preserve_files
         )
 
     @patch("shutil.which", return_value="ffmpeg_path")
@@ -471,7 +475,9 @@ class TestChapterRefinementTool:
 
         # Make sure client's download_audio_file was called
         mock_abs_client.download_audio_file.assert_called_once_with(
-            item_id, m4a_path_str, debug_preserve_files=False  # Added debug_preserve_files
+            item_id,
+            m4a_path_str,
+            debug_preserve_files=False,  # Added debug_preserve_files
         )
 
     @patch("shutil.which", return_value="ffmpeg_path")

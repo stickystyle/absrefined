@@ -25,33 +25,45 @@ class AudioTranscriber:
         # First check for dedicated transcription config
         transcription_config = self.config.get("transcription", {})
         use_local = transcription_config.get("use_local", False)
-        
+
         # Debug what config values we're actually seeing
         self.logger.debug(f"Transcription config: {transcription_config}")
-        self.logger.debug(f"use_local value detected: {use_local} (type: {type(use_local)})")
-        
+        self.logger.debug(
+            f"use_local value detected: {use_local} (type: {type(use_local)})"
+        )
+
         # Store OpenAI credentials for potential fallback
         self.openai_api_key = self.config.get("refiner", {}).get("openai_api_key")
         self.openai_api_url = self.config.get("refiner", {}).get("openai_api_url")
-        
+
         # Track whether we're using local server for fallback logic
         self.use_local = use_local == True
-        
+
         # Check if fallback is enabled
-        self.enable_fallback = transcription_config.get("enable_fallback", False) == True
-        
+        self.enable_fallback = (
+            transcription_config.get("enable_fallback", False) == True
+        )
+
         # Use dedicated transcription API settings if available, otherwise fall back to refiner
         if self.use_local:
             self.api_key = transcription_config.get("api_key", "local-key")
-            self.base_url = transcription_config.get("api_url", "http://localhost:8000/v1")
-            self.logger.info("Local transcription server enabled via use_local=true setting")
+            self.base_url = transcription_config.get(
+                "api_url", "http://localhost:8000/v1"
+            )
+            self.logger.info(
+                "Local transcription server enabled via use_local=true setting"
+            )
             self.logger.info(f"Using local transcription server at {self.base_url}")
-            
+
             # Check if we have OpenAI fallback credentials available
             if self.enable_fallback and self.openai_api_key:
-                self.logger.info("Fallback to OpenAI API is ENABLED if local server fails")
+                self.logger.info(
+                    "Fallback to OpenAI API is ENABLED if local server fails"
+                )
             elif self.enable_fallback and not self.openai_api_key:
-                self.logger.warning("Fallback is enabled but no OpenAI API credentials available")
+                self.logger.warning(
+                    "Fallback is enabled but no OpenAI API credentials available"
+                )
             else:
                 self.logger.info("Fallback to OpenAI API is DISABLED")
         elif "api_url" in transcription_config:
@@ -63,13 +75,15 @@ class AudioTranscriber:
             self.api_key = self.openai_api_key
             self.base_url = self.openai_api_url
             self.logger.info(f"Using OpenAI API for transcription")
-        
+
         if not self.api_key:
             raise KeyError("API key for transcription not found in config")
 
         try:
             self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
-            self.logger.info(f"AudioTranscriber initialized. Target API URL: {self.base_url or 'Official OpenAI'}")
+            self.logger.info(
+                f"AudioTranscriber initialized. Target API URL: {self.base_url or 'Official OpenAI'}"
+            )
         except Exception as e:
             self.logger.error(f"Failed to initialize OpenAI client: {e}")
             raise  # Re-raise critical initialization error
@@ -79,10 +93,9 @@ class AudioTranscriber:
         self.debug_preserve_files = logging_config.get("debug_files", False)
 
         # Get transcription model from transcription config first, fall back to refiner
-        self.whisper_model = (
-            transcription_config.get("whisper_model_name") or 
-            self.config.get("refiner", {}).get("whisper_model_name", "whisper-1")
-        )
+        self.whisper_model = transcription_config.get(
+            "whisper_model_name"
+        ) or self.config.get("refiner", {}).get("whisper_model_name", "whisper-1")
         self.logger.info(f"Using Whisper model for transcription: {self.whisper_model}")
 
     def transcribe_audio(
@@ -152,32 +165,41 @@ class AudioTranscriber:
                         response_format="verbose_json",
                         timestamp_granularities=["word"],
                     )
-                self.logger.info(f"Successfully transcribed using {self.base_url or 'OpenAI'}")
+                self.logger.info(
+                    f"Successfully transcribed using {self.base_url or 'OpenAI'}"
+                )
             except Exception as local_err:
                 # Only try fallback if explicitly enabled
                 if self.use_local and self.enable_fallback and self.openai_api_key:
-                    self.logger.warning(f"Local transcription server failed: {local_err}. Falling back to OpenAI API.")
-                    
+                    self.logger.warning(
+                        f"Local transcription server failed: {local_err}. Falling back to OpenAI API."
+                    )
+
                     # Create temporary client for OpenAI API
                     fallback_client = OpenAI(
-                        api_key=self.openai_api_key, 
-                        base_url=self.openai_api_url
+                        api_key=self.openai_api_key, base_url=self.openai_api_url
                     )
-                    
+
                     with open(audio_file, "rb") as audio_data:
-                        self.logger.info(f"Attempting fallback transcription with OpenAI model: whisper-1")
+                        self.logger.info(
+                            f"Attempting fallback transcription with OpenAI model: whisper-1"
+                        )
                         response = fallback_client.audio.transcriptions.create(
                             model="whisper-1",  # Always use stable OpenAI model for fallback
                             file=audio_data,
                             response_format="verbose_json",
                             timestamp_granularities=["word"],
                         )
-                    self.logger.info("Successfully transcribed using OpenAI API fallback")
+                    self.logger.info(
+                        "Successfully transcribed using OpenAI API fallback"
+                    )
                 else:
                     # Either not using local server, fallback disabled, or no credentials
                     self.logger.error(f"Transcription failed: {local_err}")
                     if self.use_local and not self.enable_fallback:
-                        self.logger.error("OpenAI API fallback is disabled. Enable with 'enable_fallback = true' in config.toml to use fallback")
+                        self.logger.error(
+                            "OpenAI API fallback is disabled. Enable with 'enable_fallback = true' in config.toml to use fallback"
+                        )
                     raise
 
             # The response object itself is what we might want to save for debugging
@@ -187,32 +209,46 @@ class AudioTranscriber:
                     with open(debug_transcript_path, "w", encoding="utf-8") as dbg_f:
                         # Save the raw data in a structured way that works for various response types
                         raw_data_to_save = {
-                            "text": getattr(response, "text", str(response)) if response else "No response"
+                            "text": getattr(response, "text", str(response))
+                            if response
+                            else "No response"
                         }
-                        
+
                         # Try to extract segments if they exist
                         if hasattr(response, "segments") and response.segments:
                             try:
                                 raw_data_to_save["segments"] = [
-                                    seg.model_dump() if hasattr(seg, "model_dump") else vars(seg)
+                                    seg.model_dump()
+                                    if hasattr(seg, "model_dump")
+                                    else vars(seg)
                                     for seg in response.segments
                                 ]
                             except Exception as seg_err:
-                                raw_data_to_save["segments_error"] = f"Error extracting segments: {seg_err}"
-                        
+                                raw_data_to_save["segments_error"] = (
+                                    f"Error extracting segments: {seg_err}"
+                                )
+
                         # Try to extract words if they exist
                         if hasattr(response, "words") and response.words:
                             try:
                                 raw_data_to_save["words"] = [
-                                    word.model_dump() if hasattr(word, "model_dump") else vars(word)
+                                    word.model_dump()
+                                    if hasattr(word, "model_dump")
+                                    else vars(word)
                                     for word in response.words
                                 ]
                             except Exception as word_err:
-                                raw_data_to_save["words_error"] = f"Error extracting words: {word_err}"
-                        
+                                raw_data_to_save["words_error"] = (
+                                    f"Error extracting words: {word_err}"
+                                )
+
                         # For fallback, include additional metadata
-                        raw_data_to_save["api_source"] = "OpenAI API Fallback" if self.use_local and self.base_url != self.openai_api_url else self.base_url or "OpenAI API"
-                        
+                        raw_data_to_save["api_source"] = (
+                            "OpenAI API Fallback"
+                            if self.use_local and self.base_url != self.openai_api_url
+                            else self.base_url or "OpenAI API"
+                        )
+
                         json.dump(raw_data_to_save, dbg_f, indent=2)
                     self.logger.info(
                         f"Raw response data saved to {debug_transcript_path}"
@@ -237,12 +273,14 @@ class AudioTranscriber:
                     self.logger.info("Creating synthetic segment from full text")
                     full_text = response.text
                     # Create a single segment with the full text
-                    openai_segments_raw = [{
-                        "id": 0,
-                        "text": full_text,
-                        "start": 0.0,
-                        "end": 30.0,  # Default to 30 seconds
-                    }]
+                    openai_segments_raw = [
+                        {
+                            "id": 0,
+                            "text": full_text,
+                            "start": 0.0,
+                            "end": 30.0,  # Default to 30 seconds
+                        }
+                    ]
                 else:
                     return []
 
@@ -254,22 +292,44 @@ class AudioTranscriber:
                 )
                 for segment_raw in openai_segments_raw:
                     # Extract the start and end times, defaulting to 0 if not found
-                    segment_start = getattr(segment_raw, "start", 0) if hasattr(segment_raw, "start") else segment_raw.get("start", 0) if isinstance(segment_raw, dict) else 0
-                    segment_end = getattr(segment_raw, "end", 0) if hasattr(segment_raw, "end") else segment_raw.get("end", 0) if isinstance(segment_raw, dict) else 0
-                    segment_text = getattr(segment_raw, "text", "") if hasattr(segment_raw, "text") else segment_raw.get("text", "") if isinstance(segment_raw, dict) else ""
-                    
+                    segment_start = (
+                        getattr(segment_raw, "start", 0)
+                        if hasattr(segment_raw, "start")
+                        else segment_raw.get("start", 0)
+                        if isinstance(segment_raw, dict)
+                        else 0
+                    )
+                    segment_end = (
+                        getattr(segment_raw, "end", 0)
+                        if hasattr(segment_raw, "end")
+                        else segment_raw.get("end", 0)
+                        if isinstance(segment_raw, dict)
+                        else 0
+                    )
+                    segment_text = (
+                        getattr(segment_raw, "text", "")
+                        if hasattr(segment_raw, "text")
+                        else segment_raw.get("text", "")
+                        if isinstance(segment_raw, dict)
+                        else ""
+                    )
+
                     adj_seg = {
                         "start": segment_start + segment_start_time,
                         "end": segment_end + segment_start_time,
                         "text": segment_text.strip(),
                         "words": [],
                     }
-                    
+
                     # Get words from segment if available
                     segment_words_raw = []
                     if hasattr(segment_raw, "words") and segment_raw.words:
                         segment_words_raw = segment_raw.words
-                    elif isinstance(segment_raw, dict) and "words" in segment_raw and segment_raw["words"]:
+                    elif (
+                        isinstance(segment_raw, dict)
+                        and "words" in segment_raw
+                        and segment_raw["words"]
+                    ):
                         segment_words_raw = segment_raw["words"]
 
                     if not segment_words_raw and openai_words_raw:
@@ -279,19 +339,30 @@ class AudioTranscriber:
                         relevant_top_level_words = [
                             w
                             for w in openai_words_raw
-                            if ((hasattr(w, "start") and hasattr(w, "end") and 
-                                 w.start >= current_segment_orig_start and 
-                                 w.end <= current_segment_orig_end) or
-                                (isinstance(w, dict) and "start" in w and "end" in w and
-                                 w["start"] >= current_segment_orig_start and 
-                                 w["end"] <= current_segment_orig_end))
+                            if (
+                                (
+                                    hasattr(w, "start")
+                                    and hasattr(w, "end")
+                                    and w.start >= current_segment_orig_start
+                                    and w.end <= current_segment_orig_end
+                                )
+                                or (
+                                    isinstance(w, dict)
+                                    and "start" in w
+                                    and "end" in w
+                                    and w["start"] >= current_segment_orig_start
+                                    and w["end"] <= current_segment_orig_end
+                                )
+                            )
                         ]
                         if relevant_top_level_words:
                             segment_words_raw = relevant_top_level_words
-                            
+
                     # If we still don't have words, try to generate approximate timestamps
                     if not segment_words_raw and adj_seg["text"]:
-                        self.logger.debug(f"Generating approximate word timestamps for segment: '{adj_seg['text'][:30]}...'")
+                        self.logger.debug(
+                            f"Generating approximate word timestamps for segment: '{adj_seg['text'][:30]}...'"
+                        )
                         segment_words = adj_seg["text"].split()
                         segment_duration = adj_seg["end"] - adj_seg["start"]
                         if segment_words and segment_duration > 0:
@@ -299,35 +370,53 @@ class AudioTranscriber:
                             for i, word in enumerate(segment_words):
                                 word_start = adj_seg["start"] + (i * avg_word_duration)
                                 word_end = word_start + avg_word_duration
-                                
-                                adj_seg["words"].append({
-                                    "word": word,
-                                    "start": word_start,
-                                    "end": word_end,
-                                    "probability": 0.5  # Default probability for generated timestamps
-                                })
-                            self.logger.debug(f"Generated {len(segment_words)} approximate word timestamps")
 
-                    # Process any available word timestamps    
+                                adj_seg["words"].append(
+                                    {
+                                        "word": word,
+                                        "start": word_start,
+                                        "end": word_end,
+                                        "probability": 0.5,  # Default probability for generated timestamps
+                                    }
+                                )
+                            self.logger.debug(
+                                f"Generated {len(segment_words)} approximate word timestamps"
+                            )
+
+                    # Process any available word timestamps
                     for word_raw in segment_words_raw:
-                        if isinstance(word_raw, dict) and "start" in word_raw and "end" in word_raw:
+                        if (
+                            isinstance(word_raw, dict)
+                            and "start" in word_raw
+                            and "end" in word_raw
+                        ):
                             # Dictionary format
                             adj_seg["words"].append(
                                 {
-                                    "word": word_raw.get("word", word_raw.get("text", "")),
+                                    "word": word_raw.get(
+                                        "word", word_raw.get("text", "")
+                                    ),
                                     "start": word_raw["start"] + segment_start_time,
                                     "end": word_raw["end"] + segment_start_time,
-                                    "probability": word_raw.get("probability", word_raw.get("confidence", 1.0)),
+                                    "probability": word_raw.get(
+                                        "probability", word_raw.get("confidence", 1.0)
+                                    ),
                                 }
                             )
                         elif hasattr(word_raw, "start") and hasattr(word_raw, "end"):
                             # Object format
                             adj_seg["words"].append(
                                 {
-                                    "word": getattr(word_raw, "word", getattr(word_raw, "text", "")),
+                                    "word": getattr(
+                                        word_raw, "word", getattr(word_raw, "text", "")
+                                    ),
                                     "start": word_raw.start + segment_start_time,
                                     "end": word_raw.end + segment_start_time,
-                                    "probability": getattr(word_raw, "probability", getattr(word_raw, "confidence", 1.0)),
+                                    "probability": getattr(
+                                        word_raw,
+                                        "probability",
+                                        getattr(word_raw, "confidence", 1.0),
+                                    ),
                                 }
                             )
                         else:
@@ -476,12 +565,14 @@ class AudioTranscriber:
             audio_path,
             output_file=default_output_path,
             segment_start_time=0,  # Assuming the file is the whole segment for this simpler method
-            write_to_file=True, # Always write for this public method unless overridden by caller
+            write_to_file=True,  # Always write for this public method unless overridden by caller
         )
 
         full_text = " ".join([seg["text"] for seg in segments if seg.get("text")])
-        self.logger.info(f"Transcription for {audio_path} completed. Text length: {len(full_text)}")
-        
+        self.logger.info(
+            f"Transcription for {audio_path} completed. Text length: {len(full_text)}"
+        )
+
         # Basic error handling for API connection or authentication issues
         # More specific errors are caught within transcribe_audio
         return {"text": full_text, "segments": segments}

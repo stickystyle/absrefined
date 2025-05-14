@@ -20,18 +20,28 @@ class MockMlxWhisper:
                         {"word": "This", "start": 0.0, "end": 1.0, "probability": 0.9},
                         {"word": "is", "start": 1.0, "end": 2.0, "probability": 0.9},
                         {"word": "test", "start": 2.0, "end": 3.0, "probability": 0.9},
-                        {"word": "audio.", "start": 3.0, "end": 5.0, "probability": 0.9}
-                    ]
+                        {
+                            "word": "audio.",
+                            "start": 3.0,
+                            "end": 5.0,
+                            "probability": 0.9,
+                        },
+                    ],
                 },
                 {
                     "start": 5.0,
                     "end": 10.0,
                     "text": "Chapter 1",
                     "words": [
-                        {"word": "Chapter", "start": 5.0, "end": 8.0, "probability": 0.9},
-                        {"word": "1", "start": 8.0, "end": 10.0, "probability": 0.9}
-                    ]
-                }
+                        {
+                            "word": "Chapter",
+                            "start": 5.0,
+                            "end": 8.0,
+                            "probability": 0.9,
+                        },
+                        {"word": "1", "start": 8.0, "end": 10.0, "probability": 0.9},
+                    ],
+                },
             ]
         }
 
@@ -43,42 +53,48 @@ sys.modules["mlx_whisper"] = MockMlxWhisper
 @pytest.fixture
 def mock_abs_response():
     """Mock response from Audiobookshelf API."""
+
     def _mock_response(
         status_code=200,
         json_data=None,
         content=None,
         raise_for_status=None,
-        headers=None
+        headers=None,
     ):
         mock_resp = MagicMock()
         # Set status code
         mock_resp.status_code = status_code
-        
+
         # Set raise_for_status method
         mock_resp.raise_for_status = MagicMock()
         if raise_for_status:
             mock_resp.raise_for_status.side_effect = raise_for_status
-            
+
         # Set json method
         if json_data is not None:
             mock_resp.json = MagicMock(return_value=json_data)
-            
+
         # Set content attribute and iter_content method
         if content is not None:
             mock_resp.content = content
             # Make iter_content more realistic for chunking if content is bytes
             if isinstance(content, bytes):
-                mock_resp.iter_content = MagicMock(return_value=iter([content[i:i+8192] for i in range(0, len(content), 8192)]))
-            else: # For non-bytes content, original behavior
+                mock_resp.iter_content = MagicMock(
+                    return_value=iter(
+                        [content[i : i + 8192] for i in range(0, len(content), 8192)]
+                    )
+                )
+            else:  # For non-bytes content, original behavior
                 mock_resp.iter_content = MagicMock(return_value=iter([content]))
-            
+
         # Set text attribute for error messages
         mock_resp.text = "Mock response text"
 
         # Set headers
         mock_resp.headers = headers if headers is not None else {}
-        
+
         return mock_resp
+
     return _mock_response
 
 
@@ -90,7 +106,7 @@ def abs_auth_response():
             "id": "user-123",
             "type": "admin",
             "username": "testuser",
-            "token": "test-token-123"
+            "token": "test-token-123",
         }
     }
 
@@ -102,31 +118,28 @@ def abs_item_response():
         "id": "lib-item-123",
         "mediaType": "book",
         "media": {
-            "metadata": {
-                "title": "Test Book",
-                "author": "Test Author"
-            },
+            "metadata": {"title": "Test Book", "author": "Test Author"},
             "chapters": [
                 {
                     "id": "chapter-1",
                     "start": 291.18,
                     "end": 1845.2,
-                    "title": "Chapter 1"
+                    "title": "Chapter 1",
                 },
                 {
                     "id": "chapter-2",
                     "start": 1845.2,
                     "end": 2257.88,
-                    "title": "Chapter 2"
+                    "title": "Chapter 2",
                 },
                 {
                     "id": "chapter-3",
                     "start": 2257.88,
                     "end": 3483.66,
-                    "title": "Chapter 3"
-                }
-            ]
-        }
+                    "title": "Chapter 3",
+                },
+            ],
+        },
     }
 
 
@@ -148,7 +161,7 @@ def mock_transcript_data():
     # if segments_dir.exists():
     #     for segment_file in segments_dir.glob("*.jsonl"):
     #         chapter_name = segment_file.stem
-            
+
     #         with open(segment_file, "r", encoding="utf-8") as f:
     #             # Load each line as JSON
     #             segments = [json.loads(line) for line in f]
@@ -161,7 +174,9 @@ def mock_transcript_data():
     return {
         "Chapter 1": [
             {
-                "start": 0.0, "end": 5.2, "text": "It was a dark and stormy night.",
+                "start": 0.0,
+                "end": 5.2,
+                "text": "It was a dark and stormy night.",
                 "words": [
                     {"word": "It", "start": 0.0, "end": 0.5, "probability": 0.9},
                     {"word": "was", "start": 0.6, "end": 1.0, "probability": 0.9},
@@ -170,29 +185,38 @@ def mock_transcript_data():
                     {"word": "and", "start": 2.1, "end": 2.5, "probability": 0.9},
                     {"word": "stormy", "start": 2.6, "end": 3.5, "probability": 0.9},
                     {"word": "night.", "start": 3.6, "end": 5.2, "probability": 0.9},
-                ]
+                ],
             },
             {
-                "start": 6.0, "end": 10.5, "text": "Suddenly, a shot rang out!",
+                "start": 6.0,
+                "end": 10.5,
+                "text": "Suddenly, a shot rang out!",
                 "words": [
                     {"word": "Suddenly,", "start": 6.0, "end": 7.0, "probability": 0.9},
                     {"word": "a", "start": 7.1, "end": 7.3, "probability": 0.9},
                     {"word": "shot", "start": 7.4, "end": 8.0, "probability": 0.9},
                     {"word": "rang", "start": 8.1, "end": 8.7, "probability": 0.9},
                     {"word": "out!", "start": 8.8, "end": 10.5, "probability": 0.9},
-                ]
-            }
+                ],
+            },
         ],
-        "Chapter 2": [ # Add another chapter for variety if needed by other tests
+        "Chapter 2": [  # Add another chapter for variety if needed by other tests
             {
-                "start": 0.0, "end": 3.0, "text": "The next morning...",
+                "start": 0.0,
+                "end": 3.0,
+                "text": "The next morning...",
                 "words": [
                     {"word": "The", "start": 0.0, "end": 0.5, "probability": 0.9},
                     {"word": "next", "start": 0.6, "end": 1.2, "probability": 0.9},
-                    {"word": "morning...", "start": 1.3, "end": 3.0, "probability": 0.9},
-                ]
+                    {
+                        "word": "morning...",
+                        "start": 1.3,
+                        "end": 3.0,
+                        "probability": 0.9,
+                    },
+                ],
             }
-        ]
+        ],
     }
 
 
@@ -200,7 +224,7 @@ def mock_transcript_data():
 def mock_valid_chapters():
     """Mock valid chapters data from valid_chapters.txt."""
     valid_chapters = {}
-    
+
     # Load real chapter data from valid_chapters.txt if it exists
     valid_file = Path("valid_chapters.txt")
     if valid_file.exists():
@@ -213,7 +237,7 @@ def mock_valid_chapters():
                     if len(parts) == 2:
                         timestamp, chapter_name = parts
                         valid_chapters[chapter_name] = timestamp
-    
+
     return valid_chapters
 
 
@@ -229,15 +253,11 @@ def mock_llm_response():
             {
                 "message": {
                     "role": "assistant",
-                    "content": "The precise chapter start is at 291.18 seconds. This timestamp represents the beginning of 'Chapter 1', which is clearly marked in the audio."
+                    "content": "The precise chapter start is at 291.18 seconds. This timestamp represents the beginning of 'Chapter 1', which is clearly marked in the audio.",
                 },
                 "index": 0,
-                "finish_reason": "stop"
+                "finish_reason": "stop",
             }
         ],
-        "usage": {
-            "prompt_tokens": 40,
-            "completion_tokens": 20,
-            "total_tokens": 60
-        }
-    } 
+        "usage": {"prompt_tokens": 40, "completion_tokens": 20, "total_tokens": 60},
+    }

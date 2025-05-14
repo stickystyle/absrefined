@@ -33,14 +33,14 @@ def _cleanup_temp_files(path):
 def main():
     """
     Main entry point for the application with command-line interface.
-    
+
     This function:
     1. Processes command-line arguments
     2. Loads configuration from a TOML file
     3. Initializes the Audiobookshelf client and refinement tool
     4. Runs the refinement process for a specified item
     5. Reports on the changes made to chapter markers
-    
+
     Returns:
         int: Exit code (0 for success, non-zero for errors)
     """
@@ -171,10 +171,12 @@ def main():
         # Path was set by config or CLI. Decide if it should be cleaned.
         # debug_files: (Optional, boolean) If true, preserves intermediate files... in the download path
         debug_preserve_path = config.get("logging", {}).get("debug_files", False)
-        
+
         # DEBUG log to help diagnose the issue
-        logging.info(f"Debug files preservation setting from config: {debug_preserve_path}")
-        
+        logging.info(
+            f"Debug files preservation setting from config: {debug_preserve_path}"
+        )
+
         if debug_preserve_path is True:  # Explicitly check for True
             logging.info(
                 f"Preserving user-specified download path due to 'debug_files=true': {current_download_path_setting}"
@@ -216,7 +218,7 @@ def main():
     # Reset logging configuration to apply the determined log level
     for handler in logging.root.handlers[:]:
         logging.root.removeHandler(handler)
-        
+
     logging.basicConfig(
         # filename='app.log',
         level=log_level,
@@ -228,7 +230,6 @@ def main():
     logger.info(f"Logging level set to: {logging.getLevelName(log_level)}")
     if args.debug:
         logger.debug("Debug logging enabled.")
-
 
     # --- Extract Item ID and Initialize Client/Tool ---
     item_id = None
@@ -321,7 +322,9 @@ def main():
 
     changes_to_confirm = []
     updates_for_server = []
-    significant_change_threshold = config.get("processing", {}).get("significant_change_threshold", 0.5)  # seconds (CLI threshold for reporting/updating)
+    significant_change_threshold = config.get("processing", {}).get(
+        "significant_change_threshold", 0.5
+    )  # seconds (CLI threshold for reporting/updating)
 
     print("\n=== Chapter Comparison ===")
     print(

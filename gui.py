@@ -11,20 +11,14 @@ import atexit
 import shutil
 from pathlib import Path
 
-# --- Import configuration loader ---
 from absrefined.config import get_config, ConfigError
 
-# --- Import your existing absrefined components ---
 from absrefined.client import AudiobookshelfClient
-from absrefined.transcriber import AudioTranscriber
-from absrefined.refiner import ChapterRefiner
 from absrefined.refinement_tool import ChapterRefinementTool
 from absrefined.utils.timestamp import format_timestamp  # Assuming you have this
 from absrefined.utils.url_utils import extract_item_id_from_url  # Added import
 
-# --- Try importing audio libraries and set flags --- #
 has_simpleaudio = False
-# has_pydub = False # Removed
 try:
     import simpleaudio as sa
     import wave  # simpleaudio uses this
@@ -78,8 +72,6 @@ def _cleanup_temp_files():
 
 atexit.register(_cleanup_temp_files)
 
-# --- Constants removed, will be from config ---
-
 
 class AbsRefinedApp:
     def __init__(self, root):
@@ -127,7 +119,9 @@ class AbsRefinedApp:
             # Extract Processing settings
             processing_config = self.config.get("processing", {})
             self.default_window = processing_config.get("search_window_seconds", 60)
-            self.significant_change_threshold = processing_config.get("significant_change_threshold", 0.5)  # default to 0.5s
+            self.significant_change_threshold = processing_config.get(
+                "significant_change_threshold", 0.5
+            )  # default to 0.5s
 
             # Use system temp directory by default
             if (
@@ -643,7 +637,6 @@ class AbsRefinedApp:
             )
 
             refined_chapters_details = full_results.get("chapter_details", [])
-            total_chapters = len(refined_chapters_details)
 
             if not refined_chapters_details:
                 msg = "Processing complete, but no chapter details were returned by the tool."
@@ -879,14 +872,18 @@ class AbsRefinedApp:
         refined_label.grid(row=start_row, column=3, padx=padx_val, sticky="w")
         # Add diff column (new)
         diff_label.grid(row=start_row, column=4, padx=padx_val, sticky="w")
-        play_button.grid(row=start_row, column=5, padx=padx_val, sticky="ew")  # Moved to column 5
+        play_button.grid(
+            row=start_row, column=5, padx=padx_val, sticky="ew"
+        )  # Moved to column 5
 
         # --- Configure State ---
         # Update to use significant_change_threshold (new)
-        can_apply = (refined_time is not None and 
-                     refined_time != original_time and 
-                     abs(time_diff) > self.significant_change_threshold)
-                      
+        can_apply = (
+            refined_time is not None
+            and refined_time != original_time
+            and abs(time_diff) > self.significant_change_threshold
+        )
+
         # Auto-check and enable the checkbox based on threshold
         if not can_apply:
             apply_check.config(state=tk.DISABLED)
@@ -980,7 +977,6 @@ class AbsRefinedApp:
 
             # Use wave module to read only the segment needed
             with wave.open(chunk_path, "rb") as wf:
-                chunk_duration = wf.getnframes() / float(sample_rate)
                 seek_frame = int(relative_start_time * sample_rate)
 
                 # Clamp seek frame to chunk boundaries
@@ -1015,7 +1011,7 @@ class AbsRefinedApp:
                 self.logger.info(
                     f"Playing {duration}s segment from chunk '{os.path.basename(chunk_path)}' at {absolute_start_time:.2f}s (relative: {relative_start_time:.2f}s)"
                 )
-                play_obj = sa.play_buffer(
+                sa.play_buffer(
                     audio_data_segment, num_channels, bytes_per_sample, sample_rate
                 )
             else:
