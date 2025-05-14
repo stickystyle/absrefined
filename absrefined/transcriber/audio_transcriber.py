@@ -50,14 +50,14 @@ class AudioTranscriber:
             self.base_url = transcription_config.get(
                 "api_url", "http://localhost:8000/v1"
             )
-            self.logger.info(
+            self.logger.debug(
                 "Local transcription server enabled via use_local=true setting"
             )
-            self.logger.info(f"Using local transcription server at {self.base_url}")
+            self.logger.debug(f"Using local transcription server at {self.base_url}")
 
             # Check if we have OpenAI fallback credentials available
             if self.enable_fallback and self.openai_api_key:
-                self.logger.info(
+                self.logger.debug(
                     "Fallback to OpenAI API is ENABLED if local server fails"
                 )
             elif self.enable_fallback and not self.openai_api_key:
@@ -65,23 +65,23 @@ class AudioTranscriber:
                     "Fallback is enabled but no OpenAI API credentials available"
                 )
             else:
-                self.logger.info("Fallback to OpenAI API is DISABLED")
+                self.logger.debug("Fallback to OpenAI API is DISABLED")
         elif "api_url" in transcription_config:
             self.api_key = transcription_config.get("api_key")
             self.base_url = transcription_config.get("api_url")
-            self.logger.info(f"Using custom transcription API at {self.base_url}")
+            self.logger.debug(f"Using custom transcription API at {self.base_url}")
         else:
             # Fall back to refiner config for backward compatibility
             self.api_key = self.openai_api_key
             self.base_url = self.openai_api_url
-            self.logger.info(f"Using OpenAI API for transcription")
+            self.logger.debug(f"Using OpenAI API for transcription")
 
         if not self.api_key:
             raise KeyError("API key for transcription not found in config")
 
         try:
             self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
-            self.logger.info(
+            self.logger.debug(
                 f"AudioTranscriber initialized. Target API URL: {self.base_url or 'Official OpenAI'}"
             )
         except Exception as e:
@@ -96,7 +96,9 @@ class AudioTranscriber:
         self.whisper_model = transcription_config.get(
             "whisper_model_name"
         ) or self.config.get("refiner", {}).get("whisper_model_name", "whisper-1")
-        self.logger.info(f"Using Whisper model for transcription: {self.whisper_model}")
+        self.logger.debug(
+            f"Using Whisper model for transcription: {self.whisper_model}"
+        )
 
     def transcribe_audio(
         self,
@@ -134,7 +136,7 @@ class AudioTranscriber:
             debug_transcript_path = os.path.join(
                 debug_dir, f"{audio_filename_base}_transcript_DEBUG.jsonl"
             )
-            self.logger.info(
+            self.logger.debug(
                 f"Debug mode: Raw OpenAI response segments will be saved to {debug_transcript_path}"
             )
 

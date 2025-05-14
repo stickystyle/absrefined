@@ -118,7 +118,7 @@ def main():
         if not config_path.is_file():
             raise ConfigError(f"Config file not found at specified path: {config_path}")
         config = get_config(config_path)
-        logging.info(f"Loaded configuration from: {config_path}")
+        logging.debug(f"Loaded configuration from: {config_path}")
     except ConfigError as e:
         logging.error(f"Configuration Error: {e}")
         # Attempt to provide guidance on creating config.toml
@@ -143,7 +143,7 @@ def main():
             config["processing"] = {}
         abs_download_path = str(args.download_path.resolve())  # Use absolute path
         config["processing"]["download_path"] = abs_download_path
-        logging.info(f"Overriding download path with: {abs_download_path}")
+        logging.debug(f"Overriding download path with: {abs_download_path}")
 
     # If download_path not provided in args or config, use system temp directory
     if "processing" not in config:
@@ -164,7 +164,7 @@ def main():
         config["processing"]["download_path"] = (
             temp_subdir  # Update config with the path being used
         )
-        logging.info(f"Using system temp directory for downloads: {temp_subdir}")
+        logging.debug(f"Using system temp directory for downloads: {temp_subdir}")
         atexit.register(_cleanup_temp_files, temp_subdir)  # Always clean up system temp
         is_path_auto_generated = True
     else:
@@ -173,17 +173,17 @@ def main():
         debug_preserve_path = config.get("logging", {}).get("debug_files", False)
 
         # DEBUG log to help diagnose the issue
-        logging.info(
+        logging.debug(
             f"Debug files preservation setting from config: {debug_preserve_path}"
         )
 
         if debug_preserve_path is True:  # Explicitly check for True
-            logging.info(
+            logging.debug(
                 f"Preserving user-specified download path due to 'debug_files=true': {current_download_path_setting}"
             )
             # No atexit registration for cleanup, path will be preserved
         else:
-            logging.info(
+            logging.debug(
                 f"Registering user-specified download path for cleanup: {current_download_path_setting}"
             )
             atexit.register(
@@ -197,12 +197,12 @@ def main():
         if "refiner" not in config:
             config["refiner"] = {}
         config["refiner"]["model_name"] = args.model
-        logging.info(f"Overriding refiner model with: {args.model}")
+        logging.debug(f"Overriding refiner model with: {args.model}")
     if args.window:  # Overrides processing window
         if "processing" not in config:
             config["processing"] = {}
         config["processing"]["search_window_seconds"] = args.window
-        logging.info(f"Overriding search window with: {args.window} seconds")
+        logging.debug(f"Overriding search window with: {args.window} seconds")
 
     # --- Setup Logging ---
     log_level_config = config.get("logging", {}).get("level", "INFO").upper()
@@ -238,7 +238,7 @@ def main():
     item_id = extract_item_id_from_url(item_specifier)
 
     if item_id:
-        logger.info(f"Extracted Item ID '{item_id}' using utility function.")
+        logger.debug(f"Extracted Item ID '{item_id}' using utility function.")
     else:
         logger.error(
             f"Could not parse Item ID from specifier: '{item_specifier}' using utility function."
@@ -289,14 +289,14 @@ def main():
     model_override_used = args.model  # This will be None if not provided via CLI
 
     logger.info(f"Starting refinement process for item: {item_id}")
-    logger.info(f"Using search window: {search_window_used}s")
+    logger.debug(f"Using search window: {search_window_used}s")
     if model_override_used:
-        logger.info(f"Using model override: {model_override_used}")
+        logger.debug(f"Using model override: {model_override_used}")
     else:
-        logger.info(
+        logger.debug(
             f"Using model from config: {tool.refiner.default_model_name}"
         )  # Access default from initialized refiner
-    logger.info(f"Dry run: {args.dry_run}")
+    logger.debug(f"Dry run: {args.dry_run}")
 
     # --- Process Item ---
     result = tool.process_item(

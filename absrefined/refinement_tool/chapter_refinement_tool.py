@@ -53,15 +53,15 @@ class ChapterRefinementTool:
                     "api_url", "http://localhost:8000/v1"
                 )
                 if enable_fallback:
-                    self.logger.info(
+                    self.logger.debug(
                         f"Using local transcription server at {api_url} with OpenAI fallback ENABLED"
                     )
                 else:
-                    self.logger.info(
+                    self.logger.debug(
                         f"Using local transcription server at {api_url} with OpenAI fallback DISABLED"
                     )
             else:
-                self.logger.info("Using standard OpenAI API for transcription")
+                self.logger.debug("Using standard OpenAI API for transcription")
 
             self.transcriber = AudioTranscriber(config=self.config)
             self.refiner = ChapterRefiner(config=self.config)
@@ -127,20 +127,21 @@ class ChapterRefinementTool:
                 )
                 if os.path.exists(path_with_other_ext):
                     full_audio_path_to_check = path_with_other_ext
-                    self.logger.info(
-                        f"Found existing full audio file: {full_audio_path_to_check}"
+                    self.logger.debug(
+                        f"Found full audio path for item {item_id}: {full_audio_path_to_check}"
                     )
                     break
 
         if os.path.exists(full_audio_path_to_check):
+            self.logger.debug(
+                f"Checking if already downloaded and exists: {os.path.exists(full_audio_path_to_check)}"
+            )
             self.logger.info(
                 f"Using existing full audio file: {full_audio_path_to_check}"
             )
             return full_audio_path_to_check
 
-        self.logger.info(
-            f"Downloading full audio file to {full_audio_path_to_check} (or similar)..."
-        )
+        self.logger.info(f"Starting download for audio file: {item_id}")
 
         downloaded_path = self.abs_client.download_audio_file(
             item_id,
@@ -154,14 +155,14 @@ class ChapterRefinementTool:
             )
             return None
 
-        self.logger.info(f"Download complete: {downloaded_path}")
+        self.logger.debug(f"Download complete: {downloaded_path}")
 
         # If the downloaded path is different from the expected path, but the file exists,
         # ensure we return the actual path where the file is located
         if downloaded_path != full_audio_path_to_check and os.path.exists(
             downloaded_path
         ):
-            self.logger.info(
+            self.logger.debug(
                 f"Note: Downloaded file path ({downloaded_path}) differs from expected path ({full_audio_path_to_check})"
             )
             return downloaded_path
@@ -200,7 +201,7 @@ class ChapterRefinementTool:
                     self.progress_callback(percent, message)
                 except Exception as cb_err:
                     self.logger.warning(f"Progress callback failed: {cb_err}")
-            self.logger.info(f"Progress: {percent}% - {message}")
+            self.logger.debug(f"Progress: {percent}% - {message}")
 
         _update_progress(0, "Starting process...")
         if not item_id:
@@ -354,11 +355,11 @@ class ChapterRefinementTool:
                 "estimated_cost": transcription_cost,
             }
 
-            self.logger.info(
-                f"Refinement token usage: Prompt={total_prompt_tokens}, Completion={total_completion_tokens}, Total={total_refined_tokens}. Estimated Cost: ${refinement_cost:.4f}"
+            self.logger.debug(
+                f"Total transcript tokens: {total_prompt_tokens}, Total refined tokens: {total_refined_tokens}"
             )
-            self.logger.info(
-                f"Transcription usage: Duration={total_transcribed_duration_seconds:.2f}s ({total_transcribed_duration_seconds / 60.0:.2f}m). Estimated Cost: ${transcription_cost:.4f}"
+            self.logger.debug(
+                f"Total transcription minutes: {total_transcribed_duration_seconds / 60.0:.2f}"
             )
 
             _update_progress(100, "Processing complete.")
@@ -390,12 +391,12 @@ class ChapterRefinementTool:
             if dry_run:
                 _update_progress(100, "Changes not pushed to server.")
 
-            self.logger.info(f"Item processing completed for {item_id}.")
+            self.logger.debug(f"Item processing completed for {item_id}.")
             cost_info = result.get("usage_and_cost", {})
-            self.logger.info(
+            self.logger.debug(
                 f"Tokens: Prompt={cost_info.get('total_prompt_tokens', 0)}, Completion={cost_info.get('total_completion_tokens', 0)}. Transcribed: {cost_info.get('total_transcribed_duration_seconds', 0):.2f}s"
             )
-            self.logger.info(
+            self.logger.debug(
                 f"Est. Costs: LLM=${cost_info.get('estimated_llm_cost', 0.0):.4f}, Transcription=${cost_info.get('estimated_transcription_cost', 0.0):.4f}, Total=${cost_info.get('total_estimated_cost', 0.0):.4f}"
             )
 
@@ -492,8 +493,9 @@ class ChapterRefinementTool:
         )  # Progress percentage allocated to this loop
 
         self.logger.info(
-            f"Processing {total_chapters} chapters using ±{search_window_seconds}s window extraction..."
+            f"Starting chapter refinement for {item_id} with {len(chapters)} chapters"
         )
+        self.logger.debug(f"Using search window: {search_window_seconds} seconds")
 
         # Helper for progress within this method
         def _update_chapter_progress(index: int, message: str):

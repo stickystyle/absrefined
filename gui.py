@@ -42,7 +42,7 @@ def _cleanup_temp_files():
     )
 
     if logger:
-        logger.info(f"Cleaning up {len(_temp_dirs_to_clean)} temporary directories")
+        logger.debug(f"Cleaning up {len(_temp_dirs_to_clean)} temporary directories")
     else:
         print(f"Cleaning up {len(_temp_dirs_to_clean)} temporary directories")
 
@@ -52,7 +52,7 @@ def _cleanup_temp_files():
 
         try:
             if logger:
-                logger.info(f"Removing directory: {temp_dir}")
+                logger.debug(f"Removing directory: {temp_dir}")
             else:
                 print(f"Removing directory: {temp_dir}")
 
@@ -168,7 +168,7 @@ class AbsRefinedApp:
         # Create the download path if it doesn't exist
         try:
             self.download_path.mkdir(parents=True, exist_ok=True)
-            self.logger.info(f"Using download path: {self.download_path.resolve()}")
+            self.logger.debug(f"Using download path: {self.download_path.resolve()}")
         except OSError as e:
             messagebox.showerror(
                 "Error",
@@ -689,7 +689,7 @@ class AbsRefinedApp:
             self.queue_task(self._update_usage_cost_display, ref_usage, trans_usage)
 
         except InterruptedError:
-            self.logger.info("Refinement task execution cancelled.")
+            self.logger.debug("Refinement task execution cancelled.")
             self.update_gui_progress(0, "Cancelled")
             self.queue_task(self._update_button_states)
         except Exception as e:
@@ -1147,7 +1147,7 @@ class AbsRefinedApp:
                 )
 
         except InterruptedError:
-            self.logger.info("Server update task execution cancelled.")
+            self.logger.debug("Server update task execution cancelled.")
             self.update_gui_progress(0, "Cancelled Update")
             # Leave buttons disabled until user starts new process
             self.queue_task(self._update_button_states, True)
@@ -1176,7 +1176,7 @@ class AbsRefinedApp:
 
     def cancel_task(self):
         """Signals the background task to cancel."""
-        self.logger.info("Cancel requested by user.")
+        self.logger.debug("Cancel requested by user.")
         self.cancel_event.set()  # Set the event flag
         self.cancel_button.config(
             state=tk.DISABLED

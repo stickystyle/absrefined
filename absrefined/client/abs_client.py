@@ -164,7 +164,7 @@ class AudiobookshelfClient:
             content_type = response.headers.get("Content-Type", "")
             is_zip_file = "zip" in content_type.lower()
 
-            self.logger.info(
+            self.logger.debug(
                 f"Content-Type: {content_type}, {'ZIP detected' if is_zip_file else 'non-ZIP file detected'}"
             )
 
@@ -175,7 +175,7 @@ class AudiobookshelfClient:
 
                 if content_length and content_length.isdigit():
                     total_size = int(content_length)
-                    self.logger.info(f"File size: {total_size / (1024 * 1024):.2f} MB")
+                    self.logger.debug(f"File size: {total_size / (1024 * 1024):.2f} MB")
                     with (
                         open(output_path, "wb") as f,
                         tqdm(
@@ -196,7 +196,7 @@ class AudiobookshelfClient:
                             if chunk:
                                 f.write(chunk)
 
-                self.logger.info("Audio file download complete.")
+                self.logger.debug("Audio file download complete.")
                 return output_path
 
             # ZIP file handling
@@ -219,7 +219,7 @@ class AudiobookshelfClient:
             content_length = response.headers.get("Content-Length")
             if content_length and content_length.isdigit():
                 total_size = int(content_length)
-                self.logger.info(f"ZIP size: {total_size / (1024 * 1024):.2f} MB")
+                self.logger.debug(f"ZIP size: {total_size / (1024 * 1024):.2f} MB")
                 with (
                     open(downloaded_zip_path, "wb") as f,
                     tqdm(
@@ -239,13 +239,13 @@ class AudiobookshelfClient:
                     for chunk in response.iter_content(chunk_size=8192):
                         if chunk:
                             f.write(chunk)
-            self.logger.info("ZIP file download complete.")
+            self.logger.debug("ZIP file download complete.")
 
             # Extract ZIP file
             self.logger.info(f"Extracting ZIP file to {extracted_files_dir}...")
             with zipfile.ZipFile(downloaded_zip_path, "r") as zip_ref:
                 zip_ref.extractall(extracted_files_dir)
-            self.logger.info("ZIP extraction complete.")
+            self.logger.debug("ZIP extraction complete.")
 
             # Find audio files in extracted directory
             audio_file_paths = []
@@ -269,24 +269,24 @@ class AudiobookshelfClient:
 
                 if first_file_ext and first_file_ext != output_ext:
                     new_output_path = f"{output_base}{first_file_ext}"
-                    self.logger.info(
+                    self.logger.debug(
                         f"Adjusting output path extension from {output_ext} to {first_file_ext}: {new_output_path}"
                     )
                     output_path = new_output_path
 
             if len(audio_file_paths) == 1:
                 # Optimization for single-file case - just copy the file directly
-                self.logger.info(
+                self.logger.debug(
                     f"Single audio file found. Copying directly to {output_path}"
                 )
                 shutil.copy(audio_file_paths[0], output_path)
-                self.logger.info(
+                self.logger.debug(
                     f"Successfully copied single audio file to {output_path}"
                 )
                 return output_path
             else:
                 # Multiple audio files need concatenation
-                self.logger.info(
+                self.logger.debug(
                     f"Found {len(audio_file_paths)} audio files for concatenation."
                 )
 
